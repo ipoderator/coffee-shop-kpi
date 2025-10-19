@@ -1,0 +1,160 @@
+# Coffee KPI Dashboard - Cursor AI Rules
+
+## Описание проекта
+Веб-приложение для анализа KPI кофейни с ML-прогнозированием выручки, анализом продаж и интеграцией внешних данных.
+
+## Технический стек
+- **Frontend**: React 18 + TypeScript + Vite + Tailwind CSS
+- **Backend**: Node.js + Express + TypeScript
+- **База данных**: PostgreSQL + Drizzle ORM
+- **UI**: Radix UI компоненты + Lucide Icons
+- **ML**: Собственный движок прогнозирования с ансамблем алгоритмов
+
+## Архитектура
+- **Монорепозиторий**: Frontend и Backend в одном проекте
+- **Разделение**: client/ - frontend, server/ - backend, shared/ - общие типы
+- **API**: RESTful API на Express, JSON ответы
+- **Данные**: PostgreSQL с миграциями через Drizzle
+
+## Правила разработки
+
+### TypeScript
+- Строгая типизация: используй `strict: true`
+- Избегай `any`, используй точные типы из `shared/schema.ts`
+- Все интерфейсы и типы определяй в `shared/schema.ts`
+- Импорты типов: `import type { ... } from '@shared/schema'`
+
+### Backend (Express + TypeScript)
+- Все роуты в `server/routes.ts`
+- Логика работы с БД в `server/storage.ts`
+- Утилиты в `server/utils/`
+- Обработка ошибок через Express middleware
+- Валидация данных через Zod схемы
+- Логирование через `log()` функцию из `server/vite.ts`
+
+### Frontend (React + TypeScript)
+- Функциональные компоненты с хуками
+- Компоненты в `client/src/components/`
+- Страницы в `client/src/pages/`
+- React Query для запросов к API
+- Tailwind CSS для стилей
+- Radix UI для сложных компонентов
+
+### База данных
+- Схема в `shared/schema.ts`
+- Миграции через Drizzle Kit: `npm run db:push`
+- Используй Drizzle ORM для всех запросов
+- Транзакции для критичных операций
+
+### API Design
+- RESTful endpoints: `/api/...`
+- POST `/api/upload` - загрузка файлов
+- GET `/api/analytics/:uploadId` - получение аналитики
+- Всегда возвращай JSON
+- Коды ответов: 200 (success), 400 (bad request), 404 (not found), 500 (error)
+
+### Обработка файлов
+- Поддержка: Excel (.xlsx, .xls), CSV, PDF
+- Парсинг в `server/utils/fileParser.ts`
+- Автоопределение колонок через COLUMN_MAPPINGS
+- Валидация данных перед сохранением
+
+### Аналитика и прогнозирование
+- Расчеты в `server/utils/analytics.ts`
+- ML прогнозирование в `server/utils/simpleMLForecasting.ts`
+- Агрегация по дням/месяцам/годам
+- Сравнение периодов (MoM, YoY, DoD)
+
+### Стиль кода
+- Используй async/await вместо промисов
+- Деструктуризация объектов и массивов
+- Arrow functions для коротких функций
+- Понятные имена переменных на английском
+- Комментарии на русском для сложной логики
+
+### Безопасность
+- Валидация всех входных данных
+- Санитизация данных перед сохранением
+- Ограничение размера загружаемых файлов (10MB)
+- Использование подготовленных запросов в БД
+
+## Команды для разработки
+
+```bash
+# Установка зависимостей
+npm install
+
+# Запуск в режиме разработки (порт 5000)
+npm run dev
+
+# Применение миграций БД
+npm run db:push
+
+# Сборка для production
+npm run build
+
+# Запуск production сборки
+npm start
+
+# Проверка типов TypeScript
+npm run check
+```
+
+## Переменные окружения
+
+Создай файл `.env` на основе `.env.example`:
+
+```env
+# Обязательно
+DATABASE_URL=postgresql://user:password@localhost:5432/coffee_kpi
+
+# Опционально для расширенного прогнозирования
+OPENWEATHER_API_KEY=your_key
+EXCHANGERATE_API_KEY=your_key
+CALENDARIFIC_API_KEY=your_key
+```
+
+## Структура данных
+
+### Transaction (основная таблица)
+- date: дата транзакции
+- amount: сумма продажи
+- checksCount: количество чеков
+- cashPayment, terminalPayment, qrPayment, sbpPayment: методы оплаты
+- refund*: данные о возвратах
+- category: категория товара (опционально)
+- employee: сотрудник (опционально)
+- uploadId: ID загрузки файла
+
+## Особенности ML прогнозирования
+
+- Минимум 14 дней данных для прогноза
+- Ансамбль из 5 алгоритмов (ARIMA, Prophet, LSTM, регрессия, скользящее среднее)
+- Учет сезонности, трендов, дня недели
+- Автоматический fallback при недостатке данных
+- Расчет уверенности прогноза (confidence)
+
+## Debugging
+
+- Логи сервера: `console.log()` в server/
+- Логи клиента: DevTools Console
+- БД запросы: включи Drizzle debug mode
+- API запросы: проверяй Network tab в DevTools
+
+## Важные замечания
+
+1. Порт 5000 обязателен для frontend сервера
+2. Все даты в формате ISO 8601
+3. Числа с плавающей точкой для денежных сумм
+4. UUID для uploadId
+5. Валидация через Zod перед сохранением в БД
+6. Graceful degradation при отсутствии внешних API
+
+## Рекомендации по коду
+
+- Не используй `any` - определяй точные типы
+- Обрабатывай все ошибки через try/catch
+- Используй React Query для кеширования данных
+- Оптимизируй БД запросы - избегай N+1
+- Пиши чистые функции без side effects где возможно
+- Используй Tailwind утилиты вместо кастомного CSS
