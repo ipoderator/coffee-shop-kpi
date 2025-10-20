@@ -1,3 +1,6 @@
+// NOTE: In production replace this in-memory storage with persistent storage (e.g. PostgreSQL or Redis)
+// and update callers that import `storage` in server/routes.ts, server/utils/auth.ts,
+// server/utils/security.ts, and server/utils/securityLogger.ts to use the new implementation.
 import { type Transaction, type InsertTransaction, type User, type InsertUser, type UserSession, type InsertUserSession, type SecurityLog, type InsertSecurityLog } from "@shared/schema";
 import { randomUUID } from "crypto";
 

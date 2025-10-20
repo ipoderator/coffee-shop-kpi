@@ -92,7 +92,17 @@ export function requireTwoFactor(req: any, res: any, next: any) {
     });
   }
   
-  // Здесь должна быть проверка токена через базу данных
-  // Для упрощения пока пропускаем
+  const secret = user.twoFactorSecret as string | undefined;
+
+  const isValid = secret ? verifyTwoFactorToken(secret, twoFactorToken) : false;
+
+  if (!isValid) {
+    return res.status(400).json({
+      success: false,
+      message: 'Неверный код двухфакторной аутентификации',
+      requiresTwoFactor: true
+    });
+  }
+
   next();
 }

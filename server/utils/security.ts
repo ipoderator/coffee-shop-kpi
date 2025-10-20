@@ -191,7 +191,7 @@ export function generateCSRFToken(): string {
 /**
  * Middleware для проверки CSRF токена
  */
-export function csrfProtection(req: Request, res: Response, next: NextFunction) {
+export async function csrfProtection(req: Request, res: Response, next: NextFunction) {
   // Пропускаем GET запросы и запросы без тела
   if (req.method === 'GET' || !req.body) {
     return next();
@@ -206,10 +206,35 @@ export function csrfProtection(req: Request, res: Response, next: NextFunction) 
       message: 'CSRF токен не предоставлен'
     });
   }
-  
-  // В реальном приложении здесь должна быть проверка токена
-  // Для упрощения пока пропускаем
-  next();
+
+  try {
+    const { storage } = await import('../storage');
+    const session = await storage.getSessionByToken(sessionToken);
+
+    if (!session) {
+      return res.status(403).json({
+        success: false,
+        message: 'Сессия не найдена'
+      });
+    }
+
+    const expectedToken = (session as { csrfToken?: string }).csrfToken;
+
+    if (typeof expectedToken !== 'string' || expectedToken !== token) {
+      return res.status(403).json({
+        success: false,
+        message: 'Недействительный CSRF токен'
+      });
+    }
+
+    return next();
+  } catch (error) {
+    console.error('CSRF validation error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Ошибка проверки CSRF токена'
+    });
+  }
 }
 
 /**

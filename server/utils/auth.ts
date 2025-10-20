@@ -3,7 +3,13 @@ import jwt from 'jsonwebtoken';
 import { randomUUID } from 'crypto';
 import type { User, InsertUser, InsertUserSession } from '@shared/schema';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+const envJwtSecret = process.env.JWT_SECRET;
+
+if (!envJwtSecret) {
+  throw new Error('JWT_SECRET must be provided');
+}
+
+const JWT_SECRET = envJwtSecret;
 const SESSION_EXPIRY_DAYS = 30;
 
 /**

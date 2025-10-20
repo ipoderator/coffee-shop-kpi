@@ -36,6 +36,77 @@ const itemVariants = {
   },
 };
 
+const PAYMENT_METHODS = [
+  { key: 'cash', label: 'Наличные' },
+  { key: 'terminal', label: 'Терминал' },
+  { key: 'qr', label: 'QR-код' },
+  { key: 'sbp', label: 'СБП' },
+] as const;
+
+type PaymentMethodKey = typeof PAYMENT_METHODS[number]['key'];
+
+type PaymentBreakdown = Partial<Record<PaymentMethodKey, number>> | undefined;
+
+interface PaymentPalette {
+  fill: string;
+  border: string;
+}
+
+interface PaymentStatsDetail {
+  key: PaymentMethodKey;
+  label: string;
+  value: number;
+  percent: number;
+}
+
+interface PaymentStats {
+  total: number;
+  details: PaymentStatsDetail[];
+  topMethod: PaymentStatsDetail | null;
+}
+
+const FALLBACK_PAYMENT_PALETTE: PaymentPalette[] = [
+  '#60a5fa',
+  '#34d399',
+  '#a855f7',
+  '#fbbf24',
+].map((color) => ({
+  fill: color,
+  border: color,
+}));
+
+const calculatePaymentStats = (breakdown: PaymentBreakdown): PaymentStats => {
+  const total = PAYMENT_METHODS.reduce(
+    (sum, method) => sum + (breakdown?.[method.key] || 0),
+    0,
+  );
+
+  const details = PAYMENT_METHODS.map((method) => {
+    const value = breakdown?.[method.key] || 0;
+    const percent = total > 0 ? (value / total) * 100 : 0;
+
+    return {
+      key: method.key,
+      label: method.label,
+      value,
+      percent,
+    };
+  });
+
+  const topMethod = details.reduce<PaymentStatsDetail | null>((best, current) => {
+    if (!best || current.value > best.value) {
+      return current;
+    }
+    return best;
+  }, null);
+
+  return {
+    total,
+    details,
+    topMethod,
+  };
+};
+
 export default function MonthlyReportPage({ analytics }: MonthlyReportPageProps) {
   const { monthlyComparison } = analytics;
 
@@ -229,41 +300,6 @@ export default function MonthlyReportPage({ analytics }: MonthlyReportPageProps)
     return currentMonth.metrics.paymentBreakdown;
   }, [monthlyComparison.dayComparison, currentMonth.metrics.paymentBreakdown]);
 
-  const currentPaymentChartData = useMemo(() => {
-    const style = getComputedStyle(document.documentElement);
-    const chart1 = style.getPropertyValue('--chart-1').trim();
-    const chart2 = style.getPropertyValue('--chart-2').trim();
-    const chart3 = style.getPropertyValue('--chart-3').trim();
-    const chart4 = style.getPropertyValue('--chart-4').trim();
-
-    return {
-      labels: ['Наличные', 'Терминал', 'QR-код', 'СБП'],
-      datasets: [
-        {
-          data: [
-            filteredCurrentPaymentBreakdown.cash,
-            filteredCurrentPaymentBreakdown.terminal,
-            filteredCurrentPaymentBreakdown.qr,
-            filteredCurrentPaymentBreakdown.sbp,
-          ],
-          backgroundColor: [
-            `hsl(${chart1} / 0.8)`,
-            `hsl(${chart2} / 0.8)`,
-            `hsl(${chart3} / 0.8)`,
-            `hsl(${chart4} / 0.8)`,
-          ],
-          borderColor: [
-            `hsl(${chart1})`,
-            `hsl(${chart2})`,
-            `hsl(${chart3})`,
-            `hsl(${chart4})`,
-          ],
-          borderWidth: 2,
-        },
-      ],
-    };
-  }, [filteredCurrentPaymentBreakdown]);
-
   const filteredPreviousPaymentBreakdown = useMemo(() => {
     if (monthlyComparison.dayComparison?.previousMonthSameDay) {
       // This contains payment breakdown aggregated from day 1 to same day number in previous month
@@ -272,49 +308,95 @@ export default function MonthlyReportPage({ analytics }: MonthlyReportPageProps)
     return previousMonth.metrics.paymentBreakdown;
   }, [monthlyComparison.dayComparison, previousMonth.metrics.paymentBreakdown]);
 
-  const previousPaymentChartData = useMemo(() => {
-    const style = getComputedStyle(document.documentElement);
-    const chart1 = style.getPropertyValue('--chart-1').trim();
-    const chart2 = style.getPropertyValue('--chart-2').trim();
-    const chart3 = style.getPropertyValue('--chart-3').trim();
-    const chart4 = style.getPropertyValue('--chart-4').trim();
+  const paymentPalette = useMemo<PaymentPalette[]>(() => {
+    if (typeof window === 'undefined') {
+      return FALLBACK_PAYMENT_PALETTE;
+    }
 
+    const style = getComputedStyle(document.documentElement);
+
+    return ['--chart-1', '--chart-2', '--chart-3', '--chart-4'].map((variable, index) => {
+      const value = style.getPropertyValue(variable).trim();
+
+      if (!value) {
+        const fallback = FALLBACK_PAYMENT_PALETTE[index];
+        return {
+          fill: fallback.fill,
+          border: fallback.border,
+        };
+      }
+
+      return {
+        fill: `hsl(${value} / 0.8)`,
+        border: `hsl(${value})`,
+      };
+    });
+  }, []);
+
+  const currentPaymentStats = useMemo(
+    () => calculatePaymentStats(filteredCurrentPaymentBreakdown),
+    [filteredCurrentPaymentBreakdown],
+  );
+
+  const previousPaymentStats = useMemo(
+    () => calculatePaymentStats(filteredPreviousPaymentBreakdown),
+    [filteredPreviousPaymentBreakdown],
+  );
+
+  const paymentShareDelta = useMemo(() => {
+    const previousShareMap = previousPaymentStats.details.reduce<Record<PaymentMethodKey, number>>(
+      (acc, detail) => {
+        acc[detail.key] = detail.percent;
+        return acc;
+      },
+      {} as Record<PaymentMethodKey, number>,
+    );
+
+    return currentPaymentStats.details.reduce<Record<PaymentMethodKey, number>>((acc, detail) => {
+      acc[detail.key] = detail.percent - (previousShareMap[detail.key] || 0);
+      return acc;
+    }, {} as Record<PaymentMethodKey, number>);
+  }, [currentPaymentStats, previousPaymentStats]);
+
+  const currentPaymentChartData = useMemo(() => {
     return {
-      labels: ['Наличные', 'Терминал', 'QR-код', 'СБП'],
+      labels: PAYMENT_METHODS.map((method) => method.label),
       datasets: [
         {
-          data: [
-            filteredPreviousPaymentBreakdown.cash,
-            filteredPreviousPaymentBreakdown.terminal,
-            filteredPreviousPaymentBreakdown.qr,
-            filteredPreviousPaymentBreakdown.sbp,
-          ],
-          backgroundColor: [
-            `hsl(${chart1} / 0.8)`,
-            `hsl(${chart2} / 0.8)`,
-            `hsl(${chart3} / 0.8)`,
-            `hsl(${chart4} / 0.8)`,
-          ],
-          borderColor: [
-            `hsl(${chart1})`,
-            `hsl(${chart2})`,
-            `hsl(${chart3})`,
-            `hsl(${chart4})`,
-          ],
+          data: currentPaymentStats.details.map((detail) => detail.value),
+          backgroundColor: paymentPalette.map((color) => color.fill),
+          borderColor: paymentPalette.map((color) => color.border),
           borderWidth: 2,
         },
       ],
     };
-  }, [filteredPreviousPaymentBreakdown]);
+  }, [currentPaymentStats, paymentPalette]);
+
+  const previousPaymentChartData = useMemo(() => {
+    return {
+      labels: PAYMENT_METHODS.map((method) => method.label),
+      datasets: [
+        {
+          data: previousPaymentStats.details.map((detail) => detail.value),
+          backgroundColor: paymentPalette.map((color) => color.fill),
+          borderColor: paymentPalette.map((color) => color.border),
+          borderWidth: 2,
+        },
+      ],
+    };
+  }, [paymentPalette, previousPaymentStats]);
 
   const chartOptions: ChartOptions<'doughnut'> = {
     responsive: true,
     maintainAspectRatio: false,
+    cutout: '68%',
     plugins: {
       legend: {
         position: 'bottom',
         labels: {
           padding: 15,
+          usePointStyle: true,
+          pointStyle: 'circle',
           font: {
             size: 12,
           },
@@ -323,10 +405,21 @@ export default function MonthlyReportPage({ analytics }: MonthlyReportPageProps)
       tooltip: {
         callbacks: {
           label: (context) => {
-            const value = context.parsed || 0;
-            return `${context.label}: ${formatCurrency(value)}`;
+            const value = context.parsed ?? 0;
+            const dataset = context.dataset.data as number[] | undefined;
+            const total = Array.isArray(dataset)
+              ? dataset.reduce((sum, item) => sum + (typeof item === 'number' ? item : 0), 0)
+              : 0;
+            const percent = total > 0 ? (value / total) * 100 : 0;
+
+            return `${context.label}: ${formatCurrency(value)} • ${percent.toFixed(1)}%`;
           },
         },
+      },
+    },
+    elements: {
+      arc: {
+        borderRadius: 8,
       },
     },
   };
@@ -506,34 +599,85 @@ export default function MonthlyReportPage({ analytics }: MonthlyReportPageProps)
           {/* Current Month Payment Breakdown */}
           <Card className="p-6" data-testid="card-current-payments">
             <h3 className="text-lg font-semibold mb-4">Методы оплаты</h3>
-            <div className="h-64 mb-4">
-              <Doughnut data={currentPaymentChartData} options={chartOptions} />
+            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-6 mb-4">
+              <div className="relative h-64 w-full sm:h-56 sm:w-56">
+                <Doughnut data={currentPaymentChartData} options={chartOptions} />
+              </div>
+              <div className="flex flex-col justify-center text-center sm:text-left gap-3">
+                <div>
+                  <span className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground block">
+                    Всего
+                  </span>
+                  <span className="text-2xl font-semibold">
+                    {formatCurrency(currentPaymentStats.total)}
+                  </span>
+                </div>
+                {currentPaymentStats.topMethod && (
+                  <div className="space-y-1">
+                    <p className="text-sm text-muted-foreground">
+                      Лидирует: <span className="font-medium text-foreground">{currentPaymentStats.topMethod.label}</span>
+                    </p>
+                    <p className="text-sm font-medium">
+                      {currentPaymentStats.topMethod.percent.toFixed(1)}% доли
+                    </p>
+                    {Math.abs(paymentShareDelta[currentPaymentStats.topMethod.key] || 0) >= 0.1 ? (
+                      <p
+                        className={`text-xs font-medium ${
+                          (paymentShareDelta[currentPaymentStats.topMethod.key] || 0) > 0
+                            ? 'text-emerald-600'
+                            : 'text-rose-600'
+                        }`}
+                      >
+                        Изменение к прошлому месяцу:{' '}
+                        {(paymentShareDelta[currentPaymentStats.topMethod.key] || 0) > 0 ? '▲' : '▼'}{' '}
+                        {Math.abs(paymentShareDelta[currentPaymentStats.topMethod.key] || 0).toFixed(1)} п.п.
+                      </p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">Доля без заметных изменений</p>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <div>
-                <p className="text-xs text-muted-foreground">Наличные</p>
-                <p className="font-semibold text-sm" data-testid="text-current-cash">
-                  {formatCurrency(filteredCurrentPaymentBreakdown.cash)}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Терминал</p>
-                <p className="font-semibold text-sm" data-testid="text-current-terminal">
-                  {formatCurrency(filteredCurrentPaymentBreakdown.terminal)}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">QR-код</p>
-                <p className="font-semibold text-sm" data-testid="text-current-qr">
-                  {formatCurrency(filteredCurrentPaymentBreakdown.qr)}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">СБП</p>
-                <p className="font-semibold text-sm" data-testid="text-current-sbp">
-                  {formatCurrency(filteredCurrentPaymentBreakdown.sbp)}
-                </p>
-              </div>
+              {currentPaymentStats.details.map((detail, index) => {
+                const delta = paymentShareDelta[detail.key] || 0;
+                const showDelta = Math.abs(delta) >= 0.1;
+                const colors = paymentPalette[index];
+
+                return (
+                  <div key={detail.key} className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="h-2.5 w-2.5 rounded-full flex-shrink-0"
+                        style={{ backgroundColor: colors.fill }}
+                      />
+                      <p className="text-xs text-muted-foreground">{detail.label}</p>
+                    </div>
+                    <p
+                      className="font-semibold text-sm"
+                      data-testid={`text-current-${detail.key}`}
+                    >
+                      {formatCurrency(detail.value)}
+                      <span className="text-muted-foreground text-xs ml-2">
+                        {detail.percent.toFixed(1)}%
+                      </span>
+                    </p>
+                    {showDelta && (
+                      <p
+                        className={`text-xs font-medium ${
+                          delta > 0 ? 'text-emerald-600' : 'text-rose-600'
+                        }`}
+                      >
+                        {delta > 0 ? '▲' : '▼'} {Math.abs(delta).toFixed(1)} п.п. к прошлому месяцу
+                      </p>
+                    )}
+                    {!showDelta && (
+                      <p className="text-xs text-muted-foreground">Без существенных изменений</p>
+                    )}
+                  </div>
+                );
+              })}
             </div>
             </Card>
           </motion.div>
@@ -578,34 +722,85 @@ export default function MonthlyReportPage({ analytics }: MonthlyReportPageProps)
           {/* Previous Month Payment Breakdown */}
           <Card className="p-6" data-testid="card-previous-payments">
             <h3 className="text-lg font-semibold mb-4">Методы оплаты</h3>
-            <div className="h-64 mb-4">
-              <Doughnut data={previousPaymentChartData} options={chartOptions} />
+            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-6 mb-4">
+              <div className="relative h-64 w-full sm:h-56 sm:w-56">
+                <Doughnut data={previousPaymentChartData} options={chartOptions} />
+              </div>
+              <div className="flex flex-col justify-center text-center sm:text-left gap-3">
+                <div>
+                  <span className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground block">
+                    Всего
+                  </span>
+                  <span className="text-2xl font-semibold">
+                    {formatCurrency(previousPaymentStats.total)}
+                  </span>
+                </div>
+                {previousPaymentStats.topMethod && (
+                  <div className="space-y-1">
+                    <p className="text-sm text-muted-foreground">
+                      Лидировал: <span className="font-medium text-foreground">{previousPaymentStats.topMethod.label}</span>
+                    </p>
+                    <p className="text-sm font-medium">
+                      {previousPaymentStats.topMethod.percent.toFixed(1)}% доли
+                    </p>
+                    {Math.abs(paymentShareDelta[previousPaymentStats.topMethod.key] || 0) >= 0.1 ? (
+                      <p
+                        className={`text-xs font-medium ${
+                          (paymentShareDelta[previousPaymentStats.topMethod.key] || 0) > 0
+                            ? 'text-emerald-600'
+                            : 'text-rose-600'
+                        }`}
+                      >
+                        Текущий месяц:{' '}
+                        {(paymentShareDelta[previousPaymentStats.topMethod.key] || 0) > 0 ? '▲' : '▼'}{' '}
+                        {Math.abs(paymentShareDelta[previousPaymentStats.topMethod.key] || 0).toFixed(1)} п.п.
+                      </p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">Текущий месяц без заметных изменений</p>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <div>
-                <p className="text-xs text-muted-foreground">Наличные</p>
-                <p className="font-semibold text-sm" data-testid="text-previous-cash">
-                  {formatCurrency(filteredPreviousPaymentBreakdown.cash)}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Терминал</p>
-                <p className="font-semibold text-sm" data-testid="text-previous-terminal">
-                  {formatCurrency(filteredPreviousPaymentBreakdown.terminal)}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">QR-код</p>
-                <p className="font-semibold text-sm" data-testid="text-previous-qr">
-                  {formatCurrency(filteredPreviousPaymentBreakdown.qr)}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">СБП</p>
-                <p className="font-semibold text-sm" data-testid="text-previous-sbp">
-                  {formatCurrency(filteredPreviousPaymentBreakdown.sbp)}
-                </p>
-              </div>
+              {previousPaymentStats.details.map((detail, index) => {
+                const delta = paymentShareDelta[detail.key] || 0;
+                const showDelta = Math.abs(delta) >= 0.1;
+                const colors = paymentPalette[index];
+
+                return (
+                  <div key={detail.key} className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="h-2.5 w-2.5 rounded-full flex-shrink-0"
+                        style={{ backgroundColor: colors.fill }}
+                      />
+                      <p className="text-xs text-muted-foreground">{detail.label}</p>
+                    </div>
+                    <p
+                      className="font-semibold text-sm"
+                      data-testid={`text-previous-${detail.key}`}
+                    >
+                      {formatCurrency(detail.value)}
+                      <span className="text-muted-foreground text-xs ml-2">
+                        {detail.percent.toFixed(1)}%
+                      </span>
+                    </p>
+                    {showDelta && (
+                      <p
+                        className={`text-xs font-medium ${
+                          delta > 0 ? 'text-emerald-600' : 'text-rose-600'
+                        }`}
+                      >
+                        Текущий месяц: {delta > 0 ? '▲' : '▼'} {Math.abs(delta).toFixed(1)} п.п.
+                      </p>
+                    )}
+                    {!showDelta && (
+                      <p className="text-xs text-muted-foreground">Текущий месяц без изменений</p>
+                    )}
+                  </div>
+                );
+              })}
             </div>
             </Card>
           </motion.div>
