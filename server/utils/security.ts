@@ -1,21 +1,8 @@
 import rateLimit from 'express-rate-limit';
 import slowDown from 'express-slow-down';
 import helmet from 'helmet';
-import { Request, Response, NextFunction } from 'express';
+import { Request, Response, NextFunction, type Express } from 'express';
 import { randomBytes } from 'crypto';
-
-// Rate limiting для аутентификации
-export const authRateLimit = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 минут
-  max: 5, // максимум 5 попыток входа за 15 минут
-  message: {
-    success: false,
-    message: 'Слишком много попыток входа. Попробуйте через 15 минут.'
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-  skipSuccessfulRequests: true, // не считаем успешные запросы
-});
 
 // Rate limiting для регистрации
 export const registerRateLimit = rateLimit({
@@ -174,10 +161,10 @@ export function checkBlocked(req: Request, res: Response, next: NextFunction) {
   if (email && isBlocked(ip, email)) {
     return res.status(429).json({
       success: false,
-      message: 'Аккаунт временно заблокирован из-за множественных неудачных попыток входа. Попробуйте через 30 минут.'
+      message: 'Слишком много попыток, попробуйте позже.'
     });
   }
-  
+
   next();
 }
 
@@ -311,4 +298,18 @@ export function devRateLimitReset(req: Request, res: Response, next: NextFunctio
     });
   }
   next();
+}
+
+/**
+ * Регистрирует dev-маршруты для управления попытками входа
+ */
+export function registerSecurityDevRoutes(app: Express) {
+  if (process.env.NODE_ENV === 'production') {
+    return;
+  }
+
+  app.get('/api/dev/reset-logins', (_req, res) => {
+    loginAttempts.clear();
+    res.json({ success: true });
+  });
 }

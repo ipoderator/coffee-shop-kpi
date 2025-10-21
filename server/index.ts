@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express, { type Request, Response, NextFunction } from "express";
 import cookieParser from "cookie-parser";
 import { registerRoutes } from "./routes";
+import { registerPlugins } from "./plugins";
 import { setupVite, serveStatic, log } from "./vite";
 
 const app = express();
@@ -42,6 +43,9 @@ app.use((req, res, next) => {
 (async () => {
   try {
     console.log('🚀 Starting Coffee KPI server...');
+
+    await registerPlugins(app);
+    console.log('✅ Plugins registered successfully');
     
     const server = await registerRoutes(app);
     console.log('✅ Routes registered successfully');

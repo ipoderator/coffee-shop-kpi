@@ -28,6 +28,21 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
 }
 
 /**
+ * Валидирует введенный пароль и сравнивает его с хешем
+ */
+export async function validatePassword(password: unknown, hash: unknown): Promise<boolean> {
+  if (typeof password !== 'string' || password.length === 0) {
+    return false;
+  }
+
+  if (typeof hash !== 'string' || hash.length === 0) {
+    return false;
+  }
+
+  return bcrypt.compare(password, hash);
+}
+
+/**
  * Генерирует JWT токен для пользователя
  */
 export function generateJWT(user: User): string {

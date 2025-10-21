@@ -1,8 +1,9 @@
+import type { Express } from 'express';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import puppeteer, { Page } from 'puppeteer';
 import cron from 'node-cron';
+import puppeteer, { type Page } from 'puppeteer';
 
 const LOGIN_URL = 'https://back.ytimes.ru/finance/shift/list';
 const REPORTS_URL = 'https://back.ytimes.ru/finance/shift/zreports';
@@ -172,13 +173,28 @@ function scheduleJob() {
   console.info(`[fetchShifts] Scheduler initialised for ${CRON_SCHEDULE} (${TIMEZONE})`);
 }
 
-if (process.argv.includes('--run-once')) {
-  fetchShiftsReport()
-    .then(() => console.info('[fetchShifts] Manual run completed'))
-    .catch((error) => {
+let isRegistered = false;
+
+export async function register(app: Express): Promise<void> {
+  if (isRegistered) {
+    return;
+  }
+
+  isRegistered = true;
+  app.locals.fetchShifts = {
+    run: fetchShiftsReport
+  };
+
+  if (process.argv.includes('--run-once')) {
+    try {
+      await fetchShiftsReport();
+      console.info('[fetchShifts] Manual run completed');
+    } catch (error) {
       console.error('[fetchShifts] Manual run failed:', error);
-      process.exitCode = 1;
-    });
-} else {
+      throw error;
+    }
+    return;
+  }
+
   scheduleJob();
 }
