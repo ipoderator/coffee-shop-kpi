@@ -115,12 +115,18 @@ export function ComparisonRevenueChart({
     // Create labels based on data length and type
     const maxLength = Math.max(currentData.length, previousData.length);
     const labels = Array.from({ length: maxLength }, (_, i) => {
-      // Если это недельные данные, показываем недели
-      if (currentData.length > 0 && currentData[0].weekLabel) {
-        return currentData[i]?.weekLabel || `Неделя ${i + 1}`;
+      const currentLabel = currentData[i]?.period;
+      const previousLabel = previousData[i]?.period;
+
+      if (currentLabel && currentLabel.trim().length > 0) {
+        return currentLabel;
       }
-      // Иначе показываем дни
-      return `${i + 1}`;
+
+      if (previousLabel && previousLabel.trim().length > 0) {
+        return previousLabel;
+      }
+
+      return `Период ${i + 1}`;
     });
 
     return {

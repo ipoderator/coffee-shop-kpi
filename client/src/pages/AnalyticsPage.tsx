@@ -6,6 +6,7 @@ import { CustomerClustersCard } from "@/components/CustomerClustersCard";
 import { AnomaliesCard } from "@/components/AnomaliesCard";
 import { TrendAnalysisCard } from "@/components/TrendAnalysisCard";
 import { MonthlyReportCard } from "@/components/MonthlyReportCard";
+import { UploadTurnoverButton } from "@/components/UploadTurnoverButton";
 import type { AnalyticsResponse } from "@shared/schema";
 import { TrendingUp, TrendingDown, Calendar, Target, BarChart3, Users, AlertTriangle } from "lucide-react";
 import { format } from "date-fns";
@@ -17,10 +18,13 @@ interface AnalyticsPageProps {
 
 export default function AnalyticsPage({ analytics }: AnalyticsPageProps) {
   const { kpi, daily, monthly, byDayOfWeek, forecast, advancedAnalytics } = analytics;
+  const dailyData = daily ?? [];
+  const monthlyData = monthly ?? [];
+  const byDayOfWeekData = byDayOfWeek ?? [];
 
   // Расчет периода данных
-  const startDate = daily.length > 0 ? new Date(daily[0].period) : new Date();
-  const endDate = daily.length > 0 ? new Date(daily[daily.length - 1].period) : new Date();
+  const startDate = dailyData.length > 0 ? new Date(dailyData[0].period) : new Date();
+  const endDate = dailyData.length > 0 ? new Date(dailyData[dailyData.length - 1].period) : new Date();
   const dataRangeText = `${format(startDate, 'd MMMM yyyy', { locale: ru })} - ${format(endDate, 'd MMMM yyyy', { locale: ru })}`;
 
   return (
@@ -36,6 +40,8 @@ export default function AnalyticsPage({ analytics }: AnalyticsPageProps) {
           <span>{dataRangeText}</span>
         </div>
       </div>
+
+      <UploadTurnoverButton />
 
       {/* Основные метрики */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -181,36 +187,13 @@ export default function AnalyticsPage({ analytics }: AnalyticsPageProps) {
 
       {/* Графики */}
       <div className="grid gap-6 lg:grid-cols-2">
-        {/* График динамики выручки */}
-        <Card className="h-[400px] flex flex-col">
-          <CardHeader>
-            <CardTitle>Динамика выручки</CardTitle>
-            <CardDescription>
-              Изменение выручки по дням
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex-1">
-            <RevenueChart data={daily} />
-          </CardContent>
-        </Card>
-
-        {/* График по дням недели */}
-        <Card className="h-[400px] flex flex-col">
-          <CardHeader>
-            <CardTitle>Выручка по дням недели</CardTitle>
-            <CardDescription>
-              Средняя выручка в разные дни недели
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex-1">
-            <DayOfWeekChart data={byDayOfWeek} />
-          </CardContent>
-        </Card>
+        <RevenueChart data={dailyData} title="Динамика выручки" periodType="day" />
+        <DayOfWeekChart data={byDayOfWeekData} title="Выручка по дням недели" />
       </div>
 
       {/* Улучшенный месячный отчет */}
-      {monthly && monthly.length > 0 && (
-        <MonthlyReportCard monthlyData={monthly} />
+      {monthlyData.length > 0 && (
+        <MonthlyReportCard monthlyData={monthlyData} />
       )}
 
       {/* Продвинутая аналитика */}
@@ -250,4 +233,3 @@ export default function AnalyticsPage({ analytics }: AnalyticsPageProps) {
     </div>
   );
 }
-

@@ -94,6 +94,12 @@ export const insertUserSessionSchema = createInsertSchema(userSessions).omit({
 export type InsertUserSession = z.infer<typeof insertUserSessionSchema>;
 export type UserSession = typeof userSessions.$inferSelect;
 
+export type AuthUser = Pick<User, "id" | "email" | "name" | "role"> & {
+  isActive?: boolean | null;
+  createdAt?: Date | string | null;
+  updatedAt?: Date | string | null;
+};
+
 // Enhanced Weather data interface
 export interface WeatherData {
   date: string;
@@ -181,6 +187,7 @@ export interface KPIMetrics {
   checksGrowth?: number;
   currentMonthTotalChecks?: number; // Общее количество чеков за текущий месяц
   currentMonthAvgChecksPerDay?: number; // Среднее количество чеков в день за текущий месяц
+  revenueGrowthYoY?: number;
 }
 
 export interface ForecastData {
@@ -275,6 +282,11 @@ export interface RevenueForecast {
     forecastDays: number;
     betaVersion?: boolean;
     betaWarning?: string;
+    timeOfMonthAnalysis?: boolean;
+    historicalPatternAnalysis?: boolean;
+    economicCycleAnalysis?: boolean;
+    localEventAnalysis?: boolean;
+    customerBehaviorAnalysis?: boolean;
   };
 }
 
@@ -537,12 +549,7 @@ export type ChangePasswordData = z.infer<typeof changePasswordSchema>;
 // API Response types
 export interface AuthResponse {
   success: boolean;
-  user?: {
-    id: string;
-    email: string;
-    name: string;
-    role: string;
-  };
+  user?: AuthUser;
   message?: string;
 }
 

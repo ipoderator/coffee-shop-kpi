@@ -142,7 +142,7 @@ export function registerAuthRoutes(app: Express): void {
           failedAttempts >= 5 ? new Date(Date.now() + 30 * 60 * 1000) : null;
         const remainingAttempts = Math.max(0, 5 - failedAttempts);
 
-        await storage.updateUserFailedAttempts(user.id, failedAttempts, lockedUntil);
+        await storage.updateUserFailedAttempts(user.id, failedAttempts, lockedUntil ?? undefined);
         await logLoginAttempt(email, ip, userAgent, false, user.id, { failedAttempts });
 
         if (lockedUntil) {
@@ -256,7 +256,15 @@ export function registerAuthRoutes(app: Express): void {
 
   app.get('/api/auth/me', requireAuthCookie, async (req, res) => {
     try {
-      const user = await storage.getUserById(req.user.userId);
+      const sessionUser = req.user;
+      if (!sessionUser) {
+        return res.status(401).json({
+          success: false,
+          message: 'Сессия не найдена',
+        });
+      }
+
+      const user = await storage.getUserById(sessionUser.userId);
       if (!user) {
         return res.status(404).json({
           success: false,
@@ -289,7 +297,15 @@ export function registerAuthRoutes(app: Express): void {
         const validatedData = changePasswordSchema.parse(req.body) as ChangePasswordData;
         const { currentPassword, newPassword } = validatedData;
 
-        const user = await storage.getUserById(req.user.userId);
+        const sessionUser = req.user;
+        if (!sessionUser) {
+          return res.status(401).json({
+            success: false,
+            message: 'Сессия не найдена',
+          });
+        }
+
+        const user = await storage.getUserById(sessionUser.userId);
         if (!user) {
           return res.status(404).json({
             success: false,

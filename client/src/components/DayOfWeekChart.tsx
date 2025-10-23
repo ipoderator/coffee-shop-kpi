@@ -24,10 +24,10 @@ ChartJS.register(
 
 interface DayOfWeekChartProps {
   data: DayOfWeekData[];
-  title: string;
+  title?: string;
 }
 
-export function DayOfWeekChart({ data, title }: DayOfWeekChartProps) {
+export function DayOfWeekChart({ data, title = 'Выручка по дням недели' }: DayOfWeekChartProps) {
   const chartData = useMemo(() => {
     const labels = data.map(d => d.dayName);
     

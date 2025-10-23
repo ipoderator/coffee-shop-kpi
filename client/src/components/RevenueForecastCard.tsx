@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { TrendingUp, TrendingDown, Minus, Calendar, BarChart3, Target, Cloud, Sun, CloudRain, Snowflake, Wind, Gift, Clock, CalendarDays } from 'lucide-react';
-import { RevenueForecast } from '@shared/schema';
+import { RevenueForecast, WeeklyForecast, ForecastData } from '@shared/schema';
 
 interface RevenueForecastCardProps {
   forecast: RevenueForecast;
@@ -145,7 +145,18 @@ export function RevenueForecastCard({ forecast }: RevenueForecastCardProps) {
   };
 
   // Группируем прогноз по неделям для лучшего отображения
-  const weeklyForecasts = [];
+  interface GeneratedWeek {
+    week: number;
+    revenue: number;
+    confidence: number;
+    days: ForecastData[];
+  }
+
+  const isGeneratedWeek = (
+    week: GeneratedWeek | WeeklyForecast,
+  ): week is GeneratedWeek => 'week' in week;
+
+  const weeklyForecasts: GeneratedWeek[] = [];
   for (let i = 0; i < nextMonth.dailyForecast.length; i += 7) {
     const week = nextMonth.dailyForecast.slice(i, i + 7);
     const weekRevenue = week.reduce((sum, day) => sum + day.predictedRevenue, 0);
@@ -720,15 +731,16 @@ export function RevenueForecastCard({ forecast }: RevenueForecastCardProps) {
             
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               {(forecastView === 'nextMonth' ? weeklyForecasts : extendedForecast.weeklyForecast).map((week, index) => {
-                const weekRevenue = forecastView === 'nextMonth' ? week.revenue : week.predictedRevenue;
-                const weekNumber = forecastView === 'nextMonth' ? week.week : week.weekNumber;
+                const isNextMonthWeek = isGeneratedWeek(week);
+                const weekRevenue = isNextMonthWeek ? week.revenue : week.predictedRevenue;
+                const weekNumber = isNextMonthWeek ? week.week : week.weekNumber;
                 const range = calculateForecastRange(weekRevenue, week.confidence);
                 const isHighConfidence = week.confidence >= 0.75;
                 const isMediumConfidence = week.confidence >= 0.55;
                 
                 return (
                   <div 
-                    key={forecastView === 'nextMonth' ? week.week : index} 
+                    key={isNextMonthWeek ? week.week : week.weekNumber ?? index} 
                     className="group relative overflow-hidden"
                     style={{ animationDelay: `${index * 100}ms` }}
                   >
@@ -899,15 +911,15 @@ export function RevenueForecastCard({ forecast }: RevenueForecastCardProps) {
                   for (let i = 1; i < weeks.length; i++) {
                     const currentWeek = weeks[i];
                     const previousWeek = weeks[i-1];
-                    const currentRevenue = forecastView === 'nextMonth' ? currentWeek.revenue : currentWeek.predictedRevenue;
-                    const previousRevenue = forecastView === 'nextMonth' ? previousWeek.revenue : previousWeek.predictedRevenue;
+                    const currentRevenue = isGeneratedWeek(currentWeek) ? currentWeek.revenue : currentWeek.predictedRevenue;
+                    const previousRevenue = isGeneratedWeek(previousWeek) ? previousWeek.revenue : previousWeek.predictedRevenue;
                     
                     const growth = previousRevenue > 0 ? ((currentRevenue - previousRevenue) / previousRevenue) * 100 : 0;
                     const isPositive = growth > 0;
                     const isNeutral = Math.abs(growth) < 1;
                     
                     trends.push({
-                      week: forecastView === 'nextMonth' ? currentWeek.week : currentWeek.weekNumber,
+                      week: isGeneratedWeek(currentWeek) ? currentWeek.week : currentWeek.weekNumber,
                       growth,
                       isPositive,
                       isNeutral,

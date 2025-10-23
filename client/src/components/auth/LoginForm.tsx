@@ -114,8 +114,8 @@ export function LoginForm({ onSwitchToRegister }: LoginFormProps) {
               <span className="text-muted-foreground">Нет аккаунта? </span>
               <Button
                 type="button"
-                variant="link"
-                className="p-0 h-auto font-normal"
+                variant="ghost"
+                className="p-0 h-auto font-normal text-primary underline-offset-4 hover:underline"
                 onClick={onSwitchToRegister}
                 disabled={isSubmitting || isLoading}
               >

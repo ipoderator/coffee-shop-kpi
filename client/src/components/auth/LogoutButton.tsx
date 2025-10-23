@@ -19,10 +19,10 @@ import {
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { ChangePasswordForm } from './ChangePasswordForm';
 import { useAuth } from '@/hooks/use-auth';
-import type { User as UserType } from '@shared/schema';
+import type { AuthUser } from '@shared/schema';
 
 interface LogoutButtonProps {
-  user: UserType;
+  user: AuthUser;
 }
 
 export function LogoutButton({ user }: LogoutButtonProps) {

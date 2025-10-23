@@ -170,8 +170,8 @@ export function RegisterForm({ onSwitchToLogin }: RegisterFormProps) {
               <span className="text-muted-foreground">Уже есть аккаунт? </span>
               <Button
                 type="button"
-                variant="link"
-                className="p-0 h-auto font-normal"
+                variant="ghost"
+                className="p-0 h-auto font-normal text-primary underline-offset-4 hover:underline"
                 onClick={onSwitchToLogin}
                 disabled={isSubmitting || isLoading}
               >

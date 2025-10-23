@@ -124,10 +124,19 @@ export class MemStorage implements IStorage {
     const id = randomUUID();
     const now = new Date();
     const user: User = {
-      ...insertUser,
       id,
-      role: insertUser.role || 'user',
+      email: insertUser.email,
+      password: insertUser.password,
+      name: insertUser.name,
+      role: insertUser.role ?? 'user',
       isActive: insertUser.isActive ?? true,
+      twoFactorSecret: insertUser.twoFactorSecret ?? null,
+      twoFactorEnabled: insertUser.twoFactorEnabled ?? false,
+      lastLoginAt: insertUser.lastLoginAt ?? null,
+      lastLoginIp: insertUser.lastLoginIp ?? null,
+      failedLoginAttempts: insertUser.failedLoginAttempts ?? 0,
+      lockedUntil: insertUser.lockedUntil ?? null,
+      passwordChangedAt: insertUser.passwordChangedAt ?? now,
       createdAt: now,
       updatedAt: now,
     };
@@ -206,6 +215,9 @@ export class MemStorage implements IStorage {
     const securityLog: SecurityLog = {
       ...log,
       id,
+      userId: log.userId ?? null,
+      userAgent: log.userAgent ?? null,
+      details: log.details ?? null,
       createdAt: new Date(),
     };
     

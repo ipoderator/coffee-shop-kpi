@@ -264,7 +264,7 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
       datasets: [
         {
           label: 'Прогноз выручки',
-          data: selectedWeekData.days.map(day => day.predictedRevenue),
+          data: selectedWeekData.days.map(day => day.predictedRevenue ?? 0),
           borderColor: 'rgb(59, 130, 246)',
           backgroundColor: 'rgba(59, 130, 246, 0.1)',
           fill: true,
@@ -275,7 +275,7 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
         },
         {
           label: 'Уверенность (%)',
-          data: selectedWeekData.days.map(day => day.confidence * 100),
+          data: selectedWeekData.days.map(day => (day.confidence ?? 0) * 100),
           borderColor: 'rgb(16, 185, 129)',
           backgroundColor: 'rgba(16, 185, 129, 0.1)',
           fill: false,
@@ -302,13 +302,16 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
       },
       tooltip: {
         callbacks: {
-          label: function(context) {
-            if (context.datasetIndex === 0) {
-              return `Выручка: ${formatCurrency(context.parsed.y)}`;
-            } else {
-              return `Уверенность: ${context.parsed.y.toFixed(1)}%`;
+          label: function (context) {
+            const value = context.parsed?.y;
+            if (value == null) {
+              return '';
             }
-          }
+            if (context.datasetIndex === 0) {
+              return `Выручка: ${formatCurrency(value)}`;
+            }
+            return `Уверенность: ${value.toFixed(1)}%`;
+          },
         }
       }
     },

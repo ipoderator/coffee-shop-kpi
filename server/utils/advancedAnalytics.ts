@@ -274,14 +274,14 @@ export class AdvancedAnalyticsEngine {
 
   // K-means алгоритм
   private kMeansClustering(data: any[], centroids: any[], k: number): any[][] {
-    let clusters = Array(k).fill(null).map(() => []);
+    let clusters: any[][] = Array.from({ length: k }, () => [] as any[]);
     let changed = true;
     let iterations = 0;
     const maxIterations = 100;
 
     while (changed && iterations < maxIterations) {
       // Назначаем точки к ближайшим центроидам
-      clusters = Array(k).fill(null).map(() => []);
+      clusters = Array.from({ length: k }, () => [] as any[]);
       
       data.forEach(point => {
         let minDistance = Infinity;

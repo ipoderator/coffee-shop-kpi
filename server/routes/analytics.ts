@@ -1,8 +1,18 @@
 import type { Express } from 'express';
+import multer from 'multer';
 import { storage } from '../storage';
-import { calculateAnalytics } from '../utils/analytics';
+import { calculateAnalytics, forecastRevenueForTransactions } from '../utils/analytics';
+import { parseExcelFile } from '../utils/fileParser';
+import { requireAuthCookie } from '../utils/auth';
+import type { Transaction } from '@shared/schema';
 
 const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const forecastUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024,
+  },
+});
 
 export function registerAnalyticsRoutes(app: Express): void {
   app.get('/api/analytics/:uploadId', async (req, res) => {
@@ -33,4 +43,69 @@ export function registerAnalyticsRoutes(app: Express): void {
       });
     }
   });
+
+  app.post(
+    '/api/ml/forecast-turnover',
+    requireAuthCookie,
+    forecastUpload.single('file'),
+    async (req, res) => {
+      try {
+        if (!req.file) {
+          return res.status(400).json({
+            success: false,
+            message: 'Файл не был загружен',
+          });
+        }
+
+        const parseResult = await parseExcelFile(req.file.buffer);
+
+        if (parseResult.rows.length === 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'Файл не содержит корректных данных',
+          });
+        }
+
+        const transactions: Transaction[] = parseResult.rows.map((row, index) => {
+          const date = row.date instanceof Date ? row.date : new Date(row.date);
+          const year = row.year ?? date.getFullYear();
+          const month = row.month ?? date.getMonth() + 1;
+
+          return {
+            id: `forecast-${index}`,
+            date,
+            year,
+            month,
+            amount: row.amount,
+            checksCount: row.checksCount ?? 1,
+            cashPayment: row.cashPayment ?? 0,
+            terminalPayment: row.terminalPayment ?? 0,
+            qrPayment: row.qrPayment ?? 0,
+            sbpPayment: row.sbpPayment ?? 0,
+            refundChecksCount: row.refundChecksCount ?? 0,
+            refundCashPayment: row.refundCashPayment ?? 0,
+            refundTerminalPayment: row.refundTerminalPayment ?? 0,
+            refundQrPayment: row.refundQrPayment ?? 0,
+            refundSbpPayment: row.refundSbpPayment ?? 0,
+            category: row.category ?? null,
+            employee: row.employee ?? null,
+            uploadId: 'forecast',
+          };
+        });
+
+        const predictions = forecastRevenueForTransactions(transactions);
+
+        res.json({
+          success: true,
+          predictions,
+        });
+      } catch (error) {
+        console.error('Forecast turnover error:', error);
+        res.status(500).json({
+          success: false,
+          message: error instanceof Error ? error.message : 'Ошибка расчета прогноза',
+        });
+      }
+    },
+  );
 }

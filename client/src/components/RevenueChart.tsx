@@ -28,11 +28,11 @@ ChartJS.register(
 
 interface RevenueChartProps {
   data: PeriodData[];
-  title: string;
-  periodType: 'day' | 'month' | 'year';
+  title?: string;
+  periodType?: 'day' | 'month' | 'year';
 }
 
-export function RevenueChart({ data, title, periodType }: RevenueChartProps) {
+export function RevenueChart({ data, title = 'Динамика выручки', periodType = 'day' }: RevenueChartProps) {
   const chartData = useMemo(() => {
     const labels = data.map(d => {
       if (periodType === 'day') {

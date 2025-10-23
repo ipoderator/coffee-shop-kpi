@@ -71,7 +71,7 @@ async function waitForDownload(downloadDir: string, trigger: () => Promise<void>
 async function fetchShiftsReport(): Promise<void> {
   const downloadDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ytimes-shifts-'));
   const browser = await puppeteer.launch({
-    headless: 'new',
+    headless: true,
     args: ['--no-sandbox', '--disable-setuid-sandbox']
   });
 

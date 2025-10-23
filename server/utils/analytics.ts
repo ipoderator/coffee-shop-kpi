@@ -19,6 +19,9 @@ import {
   addDays,
   addMonths
 } from 'date-fns';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { 
   Transaction, 
   AnalyticsResponse, 
@@ -41,6 +44,157 @@ import { SimpleMLForecastingEngine } from './simpleMLForecasting';
 import { EnhancedMLForecastingEngine } from './enhancedMLForecasting';
 import { ExternalDataService } from './externalDataSources';
 import { AdvancedAnalyticsEngine } from './advancedAnalytics';
+
+export interface SalesModel {
+  intercept: number;
+  coefficients: Record<string, number>;
+  featureOrder: string[];
+  normalization?: {
+    mean?: Record<string, number>;
+    std?: Record<string, number>;
+  };
+}
+
+let cachedSalesModel: SalesModel | null = null;
+
+function loadSalesModel(): SalesModel {
+  if (cachedSalesModel) {
+    return cachedSalesModel;
+  }
+
+  const filePath = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '..',
+    'models',
+    'salesModel.json',
+  );
+
+  try {
+    const raw = readFileSync(filePath, 'utf-8');
+    const parsed = JSON.parse(raw) as Partial<SalesModel>;
+
+    const coefficientsEntries = parsed?.coefficients
+      ? Object.entries(parsed.coefficients)
+          .filter((entry): entry is [string, number] => typeof entry[0] === 'string' && typeof entry[1] === 'number')
+      : [];
+
+    const coefficients = Object.fromEntries(coefficientsEntries);
+
+    const featureOrder =
+      Array.isArray(parsed?.featureOrder) && parsed.featureOrder.length > 0
+        ? parsed.featureOrder.filter((name): name is string => typeof name === 'string')
+        : Object.keys(coefficients);
+
+    const intercept = typeof parsed?.intercept === 'number' ? parsed.intercept : 0;
+
+    cachedSalesModel = {
+      intercept,
+      coefficients,
+      featureOrder,
+      normalization: parsed?.normalization,
+    };
+  } catch (error) {
+    console.warn('Failed to load sales model, falling back to baseline forecasts.', error);
+    cachedSalesModel = {
+      intercept: 0,
+      coefficients: {},
+      featureOrder: [],
+    };
+  }
+
+  return cachedSalesModel;
+}
+
+export function transactionToFeatureMap(transaction: Transaction): Record<string, number> {
+  const date = transaction.date instanceof Date ? transaction.date : new Date(transaction.date);
+  const amount = transaction.amount ?? 0;
+  const cash = transaction.cashPayment ?? 0;
+  const terminal = transaction.terminalPayment ?? 0;
+  const qr = transaction.qrPayment ?? 0;
+  const sbp = transaction.sbpPayment ?? 0;
+  const refunds = {
+    cash: transaction.refundCashPayment ?? 0,
+    terminal: transaction.refundTerminalPayment ?? 0,
+    qr: transaction.refundQrPayment ?? 0,
+    sbp: transaction.refundSbpPayment ?? 0,
+  };
+  const totalPositive = cash + terminal + qr + sbp;
+
+  return {
+    year: transaction.year ?? date.getFullYear(),
+    month: transaction.month ?? date.getMonth() + 1,
+    dayOfMonth: date.getDate(),
+    dayOfWeek: getDay(date),
+    amount,
+    checksCount: transaction.checksCount ?? 1,
+    cashPayment: cash,
+    terminalPayment: terminal,
+    qrPayment: qr,
+    sbpPayment: sbp,
+    totalPositivePayments: totalPositive,
+    refundChecksCount: transaction.refundChecksCount ?? 0,
+    refundCashPayment: refunds.cash,
+    refundTerminalPayment: refunds.terminal,
+    refundQrPayment: refunds.qr,
+    refundSbpPayment: refunds.sbp,
+    netRevenue: amount - (refunds.cash + refunds.terminal + refunds.qr + refunds.sbp),
+    cashShare: totalPositive > 0 ? cash / totalPositive : 0,
+    terminalShare: totalPositive > 0 ? terminal / totalPositive : 0,
+    qrShare: totalPositive > 0 ? qr / totalPositive : 0,
+    sbpShare: totalPositive > 0 ? sbp / totalPositive : 0,
+  };
+}
+
+export function forecastRevenueForTransactions(transactions: Transaction[]): number[] {
+  if (transactions.length === 0) {
+    return [];
+  }
+
+  const model = loadSalesModel();
+  const coefficients = model.coefficients;
+  const featureNames =
+    model.featureOrder.length > 0 ? model.featureOrder : Object.keys(coefficients);
+
+  if (featureNames.length === 0) {
+    return transactions.map(tx => Math.max(0, tx.amount ?? 0));
+  }
+
+  const normalization = model.normalization ?? {};
+  const means = normalization.mean ?? {};
+  const stds = normalization.std ?? {};
+
+  const featureMatrix = transactions.map(transaction => {
+    const featureMap = transactionToFeatureMap(transaction);
+    return featureNames.map(name => featureMap[name] ?? 0);
+  });
+
+  return featureMatrix.map((row, index) => {
+    let prediction = model.intercept;
+
+    row.forEach((value, columnIndex) => {
+      const featureName = featureNames[columnIndex];
+      const coefficient = coefficients[featureName] ?? 0;
+
+      let featureValue = value;
+      const mean = means[featureName];
+      const std = stds[featureName];
+
+      if (typeof std === 'number' && std > 0) {
+        featureValue =
+          (value - (typeof mean === 'number' ? mean : 0)) / std;
+      }
+
+      prediction += coefficient * featureValue;
+    });
+
+    if (!Number.isFinite(prediction)) {
+      const fallback = transactions[index]?.amount ?? 0;
+      return Math.max(0, fallback);
+    }
+
+    return Math.max(0, prediction);
+  });
+}
 
 export async function calculateAnalytics(transactions: Transaction[]): Promise<AnalyticsResponse> {
   if (transactions.length === 0) {
@@ -196,6 +350,7 @@ export async function calculateAnalytics(transactions: Transaction[]): Promise<A
     checksGrowth: checksGrowthMoM,
     currentMonthTotalChecks,
     currentMonthAvgChecksPerDay,
+    revenueGrowthYoY,
   };
 
   // Aggregate by day

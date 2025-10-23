@@ -1,7 +1,33 @@
 import * as XLSX from 'xlsx';
 import Papa from 'papaparse';
 import * as pdfParse from 'pdf-parse';
-import { COLUMN_MAPPINGS } from '@shared/schema';
+import { COLUMN_MAPPINGS as BASE_COLUMN_MAPPINGS } from '@shared/schema';
+
+const COLUMN_MAPPINGS = {
+  ...BASE_COLUMN_MAPPINGS,
+  month: [
+    ...BASE_COLUMN_MAPPINGS.month,
+    'месяц(указан номер месяца)',
+    'месяц (указан номер месяца)',
+  ],
+  amount: [
+    ...BASE_COLUMN_MAPPINGS.amount,
+    'выручка за день',
+  ],
+  cashPayment: [
+    ...BASE_COLUMN_MAPPINGS.cashPayment,
+    'оплата наличными',
+  ],
+  terminalPayment: [
+    ...BASE_COLUMN_MAPPINGS.terminalPayment,
+    'оплата по терминалу',
+  ],
+  qrPayment: [
+    ...BASE_COLUMN_MAPPINGS.qrPayment,
+    'оплата по qr-коду/сбп',
+    'оплата по qr коду/сбп',
+  ],
+};
 
 export interface ParsedRow {
   date: Date;

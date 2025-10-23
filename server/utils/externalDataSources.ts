@@ -22,6 +22,8 @@ export interface EconomicIndicator {
   consumerConfidence: number;
   unemploymentRate: number;
   gdpGrowth: number;
+  interestRate: number;
+  stockMarketIndex: number;
 }
 
 export interface HolidayData {
@@ -46,6 +48,8 @@ export interface SocialSentiment {
   sentiment: number; // -1 to 1
   volume: number;
   keywords: string[];
+  engagement?: number;
+  reach?: number;
 }
 
 /**
@@ -55,7 +59,7 @@ export interface SocialSentiment {
 export class WeatherService {
   private readonly apiKey: string;
   private readonly baseUrl = 'https://api.openweathermap.org/data/2.5';
-  private readonly cache = new Map<string, { data: WeatherAPIResponse; timestamp: number }>();
+  private readonly cache = new Map<string, { data: WeatherAPIResponse | WeatherAPIResponse[]; timestamp: number }>();
   private readonly cacheTimeout = 30 * 60 * 1000; // 30 минут
 
   constructor(apiKey: string) {
@@ -66,7 +70,11 @@ export class WeatherService {
     const cacheKey = `current_${lat}_${lon}`;
     const cached = this.cache.get(cacheKey);
     
-    if (cached && Date.now() - cached.timestamp < this.cacheTimeout) {
+    if (
+      cached &&
+      Date.now() - cached.timestamp < this.cacheTimeout &&
+      !Array.isArray(cached.data)
+    ) {
       return cached.data;
     }
 
@@ -103,8 +111,12 @@ export class WeatherService {
     const cacheKey = `forecast_${lat}_${lon}_${days}`;
     const cached = this.cache.get(cacheKey);
     
-    if (cached && Date.now() - cached.timestamp < this.cacheTimeout) {
-      return cached.data as WeatherAPIResponse[];
+    if (
+      cached &&
+      Date.now() - cached.timestamp < this.cacheTimeout &&
+      Array.isArray(cached.data)
+    ) {
+      return cached.data;
     }
 
     try {
@@ -131,12 +143,20 @@ export class WeatherService {
       });
 
       // Агрегируем данные по дням
-      for (const [date, dayData] of dailyData) {
-        const avgTemp = dayData.reduce((sum, item) => sum + item.main.temp, 0) / dayData.length;
-        const totalPrecipitation = dayData.reduce((sum, item) => sum + (item.rain?.['3h'] || 0), 0);
-        const avgHumidity = dayData.reduce((sum, item) => sum + item.main.humidity, 0) / dayData.length;
-        const avgWindSpeed = dayData.reduce((sum, item) => sum + item.wind.speed, 0) / dayData.length;
-        const avgCloudCover = dayData.reduce((sum, item) => sum + item.clouds.all, 0) / dayData.length;
+      dailyData.forEach((items, date) => {
+        const entries = items as any[];
+        const avgTemp =
+          entries.reduce((sum: number, item: any) => sum + item.main.temp, 0) / entries.length;
+        const totalPrecipitation = entries.reduce(
+          (sum: number, item: any) => sum + (item.rain?.['3h'] || 0),
+          0,
+        );
+        const avgHumidity =
+          entries.reduce((sum: number, item: any) => sum + item.main.humidity, 0) / entries.length;
+        const avgWindSpeed =
+          entries.reduce((sum: number, item: any) => sum + item.wind.speed, 0) / entries.length;
+        const avgCloudCover =
+          entries.reduce((sum: number, item: any) => sum + item.clouds.all, 0) / entries.length;
 
         forecast.push({
           date,
@@ -146,9 +166,9 @@ export class WeatherService {
           windSpeed: Math.round(avgWindSpeed * 10) / 10,
           cloudCover: Math.round(avgCloudCover),
           uvIndex: 0,
-          visibility: Math.round((dayData[0].visibility || 10000) / 1000),
+          visibility: Math.round(((entries[0]?.visibility ?? 10000) as number) / 1000),
         });
-      }
+      });
 
       this.cache.set(cacheKey, { data: forecast, timestamp: Date.now() });
       return forecast;
@@ -342,6 +362,8 @@ export class EconomicService {
       consumerConfidence: 0.2,
       unemploymentRate: 3.2,
       gdpGrowth: 2.1,
+      interestRate: 8.5,
+      stockMarketIndex: 3200,
     };
   }
 }

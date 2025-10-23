@@ -92,11 +92,11 @@ const loginAttempts = new Map<string, LoginAttempt>();
 // Очистка старых записей каждые 5 минут
 setInterval(() => {
   const now = new Date();
-  for (const [key, attempt] of loginAttempts.entries()) {
+  loginAttempts.forEach((attempt, key) => {
     if (now.getTime() - attempt.lastAttempt.getTime() > 30 * 60 * 1000) { // 30 минут
       loginAttempts.delete(key);
     }
-  }
+  });
 }, 5 * 60 * 1000);
 
 /**

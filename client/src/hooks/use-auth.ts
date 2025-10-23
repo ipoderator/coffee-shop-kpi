@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useToast } from './use-toast';
-import type { AuthResponse, LoginData, RegisterData, ChangePasswordData, User } from '@shared/schema';
+import type { AuthResponse, LoginData, RegisterData, ChangePasswordData, AuthUser } from '@shared/schema';
 
 interface AuthState {
-  user: User | null;
+  user: AuthUser | null;
   isLoading: boolean;
   isAuthenticated: boolean;
 }
@@ -68,7 +68,7 @@ const authAPI = {
     return response.json();
   },
 
-  async getMe(): Promise<{ success: boolean; user: User }> {
+  async getMe(): Promise<{ success: boolean; user: AuthUser }> {
     const response = await fetch('/api/auth/me', {
       credentials: 'include',
     });
@@ -135,11 +135,12 @@ export function useAuth(): AuthContextType {
         description: data.message || 'Добро пожаловать!',
       });
     },
-    onError: (error) => {
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : 'Произошла ошибка входа';
       setAuthState(prev => ({ ...prev, isLoading: false }));
       toast({
         title: 'Ошибка входа',
-        description: error.message,
+        description: message,
         variant: 'destructive',
       });
     },
@@ -160,11 +161,12 @@ export function useAuth(): AuthContextType {
         description: data.message || 'Добро пожаловать!',
       });
     },
-    onError: (error) => {
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : 'Произошла ошибка регистрации';
       setAuthState(prev => ({ ...prev, isLoading: false }));
       toast({
         title: 'Ошибка регистрации',
-        description: error.message,
+        description: message,
         variant: 'destructive',
       });
     },
@@ -185,7 +187,7 @@ export function useAuth(): AuthContextType {
         description: 'Вы успешно вышли из системы',
       });
     },
-    onError: (error) => {
+    onError: () => {
       // Even if logout fails on server, clear local state
       setAuthState({
         user: null,
@@ -209,10 +211,11 @@ export function useAuth(): AuthContextType {
         description: data.message || 'Пароль успешно изменен',
       });
     },
-    onError: (error) => {
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : 'Не удалось изменить пароль';
       toast({
         title: 'Ошибка изменения пароля',
-        description: error.message,
+        description: message,
         variant: 'destructive',
       });
     },
@@ -226,7 +229,7 @@ export function useAuth(): AuthContextType {
         isLoading: false,
         isAuthenticated: true,
       });
-    } else if (error && error.message === 'Unauthorized') {
+    } else if (error instanceof Error && error.message === 'Unauthorized') {
       setAuthState({
         user: null,
         isLoading: false,
