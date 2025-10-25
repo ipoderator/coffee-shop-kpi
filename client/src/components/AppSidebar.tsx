@@ -1,4 +1,4 @@
-import { BarChart3, TrendingUp, CreditCard, Database, Upload, Home, CalendarRange } from 'lucide-react';
+import { BarChart3, TrendingUp, CreditCard, Database, Upload, Home, CalendarRange, Plug } from 'lucide-react';
 import { Link, useLocation } from 'wouter';
 import {
   Sidebar,
@@ -49,6 +49,12 @@ const menuItems = [
     url: '/data',
     icon: Database,
     testId: 'link-data',
+  },
+  {
+    title: 'Интеграции',
+    url: '/integrations',
+    icon: Plug,
+    testId: 'link-integrations',
   },
 ];
 

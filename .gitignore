@@ -132,3 +132,6 @@ attached_assets/
 
 # PNG files (screenshots)
 *.png
+
+# ML training artifacts
+server/data/

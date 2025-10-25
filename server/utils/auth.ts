@@ -197,6 +197,30 @@ export async function requireAuthCookie(req: any, res: any, next: any) {
 }
 
 /**
+ * Middleware для проверки авторизации через JWT или cookie
+ */
+export async function requireAuthAny(req: any, res: any, next: any) {
+  const authHeader = req.headers.authorization;
+
+  if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.substring(7);
+    const decoded = verifyJWT(token);
+
+    if (!decoded) {
+      return res.status(401).json({
+        success: false,
+        message: 'Недействительный токен авторизации',
+      });
+    }
+
+    req.user = decoded;
+    return next();
+  }
+
+  return await requireAuthCookie(req, res, next);
+}
+
+/**
  * Middleware для проверки роли администратора
  */
 export function requireAdmin(req: any, res: any, next: any) {

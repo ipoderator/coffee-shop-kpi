@@ -7,6 +7,7 @@ import { AnomaliesCard } from "@/components/AnomaliesCard";
 import { TrendAnalysisCard } from "@/components/TrendAnalysisCard";
 import { MonthlyReportCard } from "@/components/MonthlyReportCard";
 import { UploadTurnoverButton } from "@/components/UploadTurnoverButton";
+import { UploadTrainingDataButton } from "@/components/UploadTrainingDataButton";
 import type { AnalyticsResponse } from "@shared/schema";
 import { TrendingUp, TrendingDown, Calendar, Target, BarChart3, Users, AlertTriangle } from "lucide-react";
 import { format } from "date-fns";
@@ -41,7 +42,10 @@ export default function AnalyticsPage({ analytics }: AnalyticsPageProps) {
         </div>
       </div>
 
-      <UploadTurnoverButton />
+      <div className="grid gap-4 lg:grid-cols-2">
+        <UploadTurnoverButton />
+        <UploadTrainingDataButton />
+      </div>
 
       {/* Основные метрики */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">

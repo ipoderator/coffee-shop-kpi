@@ -18,6 +18,7 @@ import SalesPage from "@/pages/SalesPage";
 import PaymentsPage from "@/pages/PaymentsPage";
 import DataPage from "@/pages/DataPage";
 import MonthlyReportPage from "@/pages/MonthlyReportPage";
+import IntegrationsPage from "@/pages/IntegrationsPage";
 import { motion } from 'framer-motion';
 import { Coffee, TrendingUp, BarChart3 } from 'lucide-react';
 import type { AnalyticsResponse, FileUploadResponse } from '@shared/schema';
@@ -264,6 +265,9 @@ function DashboardLayout() {
               </Route>
               <Route path="/data">
                 <DataPage analytics={analytics} />
+              </Route>
+              <Route path="/integrations">
+                <IntegrationsPage />
               </Route>
               <Route path="/">
                 <Redirect to="/overview" />

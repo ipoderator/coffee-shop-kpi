@@ -1,6 +1,44 @@
 import { Transaction, ForecastData } from '@shared/schema';
 import { addDays, format, getDay, startOfDay, endOfDay } from 'date-fns';
 
+const isEnsembleDebugEnabled = process.env.DEBUG_ENSEMBLE === 'true';
+
+function calculateHistoricalClamp(
+  values: number[],
+  fallback: number,
+): { mean: number; std: number; clampLimit: number } {
+  const sanitized = values.filter(value => Number.isFinite(value) && value > 0);
+  const fallbackMean = Number.isFinite(fallback) && fallback > 0 ? fallback : 1;
+  const mean =
+    sanitized.length > 0
+      ? sanitized.reduce((sum, value) => sum + value, 0) / sanitized.length
+      : fallbackMean;
+  const effectiveMean = mean > 0 ? mean : fallbackMean;
+
+  let variance = 0;
+  if (sanitized.length > 1) {
+    variance =
+      sanitized.reduce((sum, value) => sum + Math.pow(value - effectiveMean, 2), 0) /
+      sanitized.length;
+  } else {
+    variance = Math.pow(effectiveMean * 0.15, 2);
+  }
+
+  const std = Math.sqrt(Math.max(variance, 0));
+  const limitBase = Math.max(effectiveMean * 3, effectiveMean + 3 * std);
+  const clampLimit = Number.isFinite(limitBase) && limitBase > 0 ? limitBase : effectiveMean * 3;
+
+  return {
+    mean: effectiveMean,
+    std,
+    clampLimit,
+  };
+}
+
+function formatDebugNumber(value: number, fractionDigits = 2): string {
+  return Number.isFinite(value) ? value.toFixed(fractionDigits) : 'NaN';
+}
+
 // Интерфейсы для ML моделей
 interface TimeSeriesData {
   date: string;
@@ -303,6 +341,13 @@ export class SimpleMLForecastingEngine {
     const forecasts: ForecastData[] = [];
     const lastDate = new Date(timeSeriesData[timeSeriesData.length - 1].date);
     const avgRevenue = timeSeriesData.reduce((sum, d) => sum + d.revenue, 0) / timeSeriesData.length;
+    const historicalRevenues = timeSeriesData.map(d => d.revenue);
+    const { clampLimit } = calculateHistoricalClamp(historicalRevenues, avgRevenue);
+    const ensembleWeights = {
+      arima: 0.3,
+      prophet: 0.4,
+      lstm: 0.3,
+    };
 
     for (let i = 1; i <= days; i++) {
       const forecastDate = addDays(lastDate, i);
@@ -316,7 +361,41 @@ export class SimpleMLForecastingEngine {
       const lstmPrediction = avgRevenue * lstmWeights[0];
 
       // Ансамбль прогнозов
-      const ensemblePrediction = (arimaPrediction * 0.3 + prophetPrediction * 0.4 + lstmPrediction * 0.3);
+      const componentPredictions = {
+        arima: arimaPrediction,
+        prophet: prophetPrediction,
+        lstm: lstmPrediction,
+      };
+      const rawEnsemblePrediction =
+        componentPredictions.arima * ensembleWeights.arima +
+        componentPredictions.prophet * ensembleWeights.prophet +
+        componentPredictions.lstm * ensembleWeights.lstm;
+      const clampedEnsemblePrediction = Math.min(rawEnsemblePrediction, clampLimit);
+      const safePrediction = Math.max(0, clampedEnsemblePrediction);
+
+      if (isEnsembleDebugEnabled) {
+        const dateLabel = format(forecastDate, 'yyyy-MM-dd');
+        console.debug(
+          `[simple ensemble][${dateLabel}] base=${formatDebugNumber(avgRevenue)} ` +
+            `raw=${formatDebugNumber(rawEnsemblePrediction)} ` +
+            `clamp=${formatDebugNumber(clampLimit)} ` +
+            `clamped=${formatDebugNumber(clampedEnsemblePrediction)} ` +
+            `final=${formatDebugNumber(safePrediction)}`,
+        );
+        (Object.keys(componentPredictions) as Array<keyof typeof componentPredictions>).forEach(
+          component => {
+            const weight = ensembleWeights[component];
+            const prediction = componentPredictions[component];
+            const contribution = prediction * weight;
+            console.debug(
+              `[simple ensemble][${dateLabel}] ${component}: ` +
+                `weight=${formatDebugNumber(weight, 2)} ` +
+                `prediction=${formatDebugNumber(prediction)} ` +
+                `contribution=${formatDebugNumber(contribution)}`,
+            );
+          },
+        );
+      }
 
       // Расчет факторов влияния
       const factors = this.calculateInfluenceFactors(forecastDate, timeSeriesData);
@@ -329,7 +408,7 @@ export class SimpleMLForecastingEngine {
 
       forecasts.push({
         date: format(forecastDate, 'yyyy-MM-dd'),
-        predictedRevenue: Math.round(Math.max(0, ensemblePrediction)),
+        predictedRevenue: Math.round(safePrediction),
         confidence: Math.round(confidence * 100) / 100,
         trend,
         weatherImpact: factors.weather,

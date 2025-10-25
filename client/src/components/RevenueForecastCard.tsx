@@ -144,6 +144,32 @@ export function RevenueForecastCard({ forecast }: RevenueForecastCardProps) {
     return <Minus className="h-3 w-3" />;
   };
 
+  const activeDailyForecast =
+    forecastView === 'nextMonth'
+      ? nextMonth.dailyForecast
+      : extendedForecast.dailyForecast;
+
+  const totalPredictedRevenue =
+    forecastView === 'nextMonth'
+      ? nextMonth.predictedRevenue
+      : extendedForecast.totalPredictedRevenue;
+
+  const totalDays =
+    activeDailyForecast.length > 0 ? activeDailyForecast.length : Math.max(methodology.forecastDays, 1);
+
+  const averageDailyPrediction =
+    totalDays > 0 ? totalPredictedRevenue / totalDays : totalPredictedRevenue;
+
+  const summaryPredictedRevenue =
+    forecastPeriod === 'weekly'
+      ? averageDailyPrediction * 7
+      : forecastPeriod === 'monthly'
+        ? averageDailyPrediction * 30
+        : averageDailyPrediction;
+
+  const summaryConfidence =
+    forecastView === 'nextMonth' ? nextMonth.confidence : extendedForecast.averageConfidence;
+
   // Группируем прогноз по неделям для лучшего отображения
   interface GeneratedWeek {
     week: number;
@@ -241,27 +267,22 @@ export function RevenueForecastCard({ forecast }: RevenueForecastCardProps) {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="text-center p-4 bg-blue-50 rounded-lg">
             <div className="text-lg font-bold text-blue-600 mb-1">
-              {formatRange(
-                forecastView === 'nextMonth' 
-                  ? nextMonth.predictedRevenue 
-                  : extendedForecast.totalPredictedRevenue,
-                forecastView === 'nextMonth' 
-                  ? nextMonth.confidence 
-                  : extendedForecast.averageConfidence
-              )}
+              {formatRange(summaryPredictedRevenue, summaryConfidence)}
             </div>
             <div className="text-sm text-blue-600">
-              {forecastView === 'nextMonth' ? 'Диапазон прогноза' : 'Диапазон на 90 дней'}
+              {forecastPeriod === 'daily'
+                ? forecastView === 'nextMonth'
+                  ? 'Средняя дневная выручка'
+                  : 'Средняя дневная выручка (90 дней)'
+                : forecastPeriod === 'weekly'
+                  ? 'Прогноз на неделю'
+                  : 'Прогноз на месяц'}
             </div>
             <div className="text-xs text-blue-500 mt-1">
               ±{Math.round(calculateForecastRange(
-                forecastView === 'nextMonth' 
-                  ? nextMonth.predictedRevenue 
-                  : extendedForecast.totalPredictedRevenue,
-                forecastView === 'nextMonth' 
-                  ? nextMonth.confidence 
-                  : extendedForecast.averageConfidence
-              ).range)}% от прогноза
+                summaryPredictedRevenue,
+                summaryConfidence
+              ).range)}% от выбранного периода
             </div>
             <div className="text-xs text-green-600 mt-1">
               Качество данных: {Math.round(calculateExternalDataQuality(forecast) * 100)}%
@@ -270,24 +291,14 @@ export function RevenueForecastCard({ forecast }: RevenueForecastCardProps) {
           
           <div className="text-center p-4 bg-green-50 rounded-lg">
             <div className={`text-2xl font-bold ${getConfidenceColor(
-              forecastView === 'nextMonth' 
-                ? nextMonth.confidence 
-                : extendedForecast.averageConfidence
+              summaryConfidence
             )}`}>
-              {Math.round((forecastView === 'nextMonth' 
-                ? nextMonth.confidence 
-                : extendedForecast.averageConfidence) * 100)}%
+              {Math.round(summaryConfidence * 100)}%
             </div>
             <div className={`text-sm ${getConfidenceColor(
-              forecastView === 'nextMonth' 
-                ? nextMonth.confidence 
-                : extendedForecast.averageConfidence
+              summaryConfidence
             )}`}>
-              Уверенность: {getConfidenceLabel(
-                forecastView === 'nextMonth' 
-                  ? nextMonth.confidence 
-                  : extendedForecast.averageConfidence
-              )}
+              Уверенность: {getConfidenceLabel(summaryConfidence)}
             </div>
           </div>
           

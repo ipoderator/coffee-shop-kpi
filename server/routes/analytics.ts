@@ -1,9 +1,14 @@
+import path from 'node:path';
 import type { Express } from 'express';
 import multer from 'multer';
 import { storage } from '../storage';
-import { calculateAnalytics, forecastRevenueForTransactions } from '../utils/analytics';
+import {
+  calculateAnalytics,
+  forecastRevenueForTransactions,
+} from '../utils/analytics';
 import { parseExcelFile } from '../utils/fileParser';
 import { requireAuthCookie } from '../utils/auth';
+import { getTrainingFileFieldName, trainSalesModelFromExcel, TrainingError } from '../utils/training';
 import type { Transaction } from '@shared/schema';
 
 const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -11,6 +16,13 @@ const forecastUpload = multer({
   storage: multer.memoryStorage(),
   limits: {
     fileSize: 10 * 1024 * 1024,
+  },
+});
+
+const trainingUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 15 * 1024 * 1024,
   },
 });
 
@@ -104,6 +116,71 @@ export function registerAnalyticsRoutes(app: Express): void {
         res.status(500).json({
           success: false,
           message: error instanceof Error ? error.message : 'Ошибка расчета прогноза',
+        });
+      }
+    },
+  );
+
+  app.post(
+    '/api/ml/train-from-upload',
+    requireAuthCookie,
+    (req, res, next) => {
+      trainingUpload.single(getTrainingFileFieldName())(req, res, err => {
+        if (err) {
+          console.error('Training upload error:', err);
+          if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+            return res.status(400).json({
+              success: false,
+              message: 'Файл слишком большой. Максимальный размер — 15 МБ.',
+            });
+          }
+
+          return res.status(400).json({
+            success: false,
+            message: 'Не удалось загрузить файл. Попробуйте ещё раз.',
+          });
+        }
+        return next();
+      });
+    },
+    async (req, res) => {
+      const file = (req as typeof req & { file?: Express.Multer.File }).file;
+
+      if (!file) {
+        return res.status(400).json({
+          success: false,
+          message: 'Файл не был загружен.',
+        });
+      }
+
+      const extension = path.extname(file.originalname).toLowerCase();
+      if (!['.xlsx', '.xls'].includes(extension)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Неверный формат файла. Допустимы только .xlsx и .xls',
+        });
+      }
+
+      try {
+        const result = await trainSalesModelFromExcel(file.buffer, file.originalname);
+
+        return res.json({
+          success: true,
+          message: result.message,
+          modelUpdated: true,
+        });
+      } catch (error) {
+        if (error instanceof TrainingError) {
+          return res.status(error.status).json({
+            success: false,
+            message: error.message,
+          });
+        }
+
+        console.error('train-from-upload error:', error);
+        return res.status(500).json({
+          success: false,
+          message: 'Неожиданная ошибка при обработке файла.',
         });
       }
     },

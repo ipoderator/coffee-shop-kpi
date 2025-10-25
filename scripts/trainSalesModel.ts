@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url';
 
 import { parseExcelFile } from '../server/utils/fileParser';
 import type { Transaction } from '@shared/schema';
-import { transactionToFeatureMap, type SalesModel } from '../server/utils/analytics';
+import { engineerDailyFeatures } from '../server/utils/salesFeatures';
+import { SALES_MODEL_VERSION, type SalesModel } from '../server/utils/analytics';
 
 interface ParsedArgs {
   inputPath: string;
@@ -23,6 +24,25 @@ interface TrainingResult {
     rmse: number;
     r2: number;
   };
+}
+
+function computeMean(values: number[]): number {
+  if (values.length === 0) {
+    return 0;
+  }
+  const sum = values.reduce((acc, value) => acc + value, 0);
+  return sum / values.length;
+}
+
+function computeStd(values: number[], mean: number = computeMean(values)): number {
+  if (values.length <= 1) {
+    return 0;
+  }
+
+  const variance =
+    values.reduce((acc, value) => acc + (value - mean) * (value - mean), 0) / values.length;
+
+  return Math.sqrt(Math.max(variance, 0));
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -309,8 +329,11 @@ function trainModel(featureMaps: Record<string, number>[], targets: number[], la
     return featureNames.map(name => {
       const value = map[name] ?? 0;
       const mean = means[name] ?? 0;
-      const std = stds[name] ?? 1;
-      return std > 0 ? (value - mean) / std : 0;
+      const stdCandidate = stds[name];
+      const std =
+        typeof stdCandidate === 'number' && Number.isFinite(stdCandidate) ? stdCandidate : 1;
+      const safeStd = std > 1e-6 ? std : 1e-6;
+      return (value - mean) / safeStd;
     });
   });
 
@@ -340,9 +363,12 @@ function trainModel(featureMaps: Record<string, number>[], targets: number[], la
     featureNames.forEach(name => {
       const coefficient = coefficients[name] ?? 0;
       const mean = means[name] ?? 0;
-      const std = stds[name] ?? 1;
+      const stdCandidate = stds[name];
+      const std =
+        typeof stdCandidate === 'number' && Number.isFinite(stdCandidate) ? stdCandidate : 1;
+      const safeStd = std > 1e-6 ? std : 1e-6;
       const value = map[name] ?? 0;
-      const normalized = std > 0 ? (value - mean) / std : 0;
+      const normalized = (value - mean) / safeStd;
       prediction += coefficient * normalized;
     });
     return prediction;
@@ -406,20 +432,54 @@ async function main(): Promise<void> {
       throw new Error('No valid transactions found in the provided file.');
     }
 
-    const featureMaps = transactions.map(transactionToFeatureMap);
-    const targets = transactions.map(tx => tx.amount ?? 0);
+    const featureEngineering = engineerDailyFeatures(transactions);
 
-    const { model, metrics } = trainModel(featureMaps, targets, args.lambda);
+    if (featureEngineering.featureMaps.length === 0 || featureEngineering.targets.length === 0) {
+      throw new Error('Недостаточно ежедневных записей для обучения модели после агрегации.');
+    }
+
+    const { model, metrics } = trainModel(
+      featureEngineering.featureMaps,
+      featureEngineering.targets,
+      args.lambda,
+    );
+
+    const targetMean = computeMean(featureEngineering.targets);
+    const computedTargetStd = computeStd(featureEngineering.targets, targetMean);
+    const targetStd = computedTargetStd > 1e-6 ? computedTargetStd : 1e-6;
+    const checksMean = computeMean(featureEngineering.aggregates.map(record => record.checksCount ?? 0));
+
+    const enhancedModel: SalesModel = {
+      ...model,
+      metadata: {
+        version: SALES_MODEL_VERSION,
+        trainedAt: new Date().toISOString(),
+        trainingSamples: metrics.samples,
+        featuresUsed: metrics.features,
+        lambda: args.lambda,
+        targetMean,
+        targetStd,
+        checksMean,
+        metrics: {
+          mae: metrics.mae,
+          rmse: metrics.rmse,
+          r2: metrics.r2,
+        },
+      },
+    };
 
     await mkdir(path.dirname(outputPath), { recursive: true });
-    await writeFile(outputPath, JSON.stringify(model, null, 2), 'utf-8');
+    await writeFile(outputPath, JSON.stringify(enhancedModel, null, 2), 'utf-8');
 
     console.log('Sales model training complete.');
-    console.log(`Samples used: ${metrics.samples}`);
+    console.log(`Daily samples used: ${metrics.samples}`);
     console.log(`Features used: ${metrics.features}`);
     console.log(`MAE: ${metrics.mae.toFixed(2)}`);
     console.log(`RMSE: ${metrics.rmse.toFixed(2)}`);
     console.log(`R²: ${metrics.r2.toFixed(4)}`);
+    if (Number.isFinite(targetMean)) {
+      console.log(`Target mean: ${targetMean.toFixed(2)}`);
+    }
     console.log(`Model saved to: ${outputPath}`);
   } catch (error) {
     console.error('Failed to train sales model.');

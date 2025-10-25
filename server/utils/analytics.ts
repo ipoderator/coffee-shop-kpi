@@ -163,24 +163,18 @@ function ensureAbsolutePrediction(prediction: number, baseDayRevenue: number): n
     return Math.max(0, baseDayRevenue);
   }
 
-  if (prediction <= 0) {
-    return 0;
-  }
-
   if (baseDayRevenue <= 0) {
-    return prediction;
+    return Math.max(0, prediction);
   }
 
-  if (prediction < 5) {
-    const converted = baseDayRevenue * prediction;
-    const diffOriginal = Math.abs(prediction - baseDayRevenue);
-    const diffConverted = Math.abs(converted - baseDayRevenue);
-    if (diffConverted < diffOriginal) {
-      return Math.max(0, converted);
-    }
-  }
+  const positivePrediction = Math.max(prediction, 0);
+  const base = Math.max(baseDayRevenue, 1e-6);
+  const rawMultiplier =
+    positivePrediction <= 10 ? positivePrediction : positivePrediction / base;
+  const safeMultiplier =
+    Number.isFinite(rawMultiplier) && rawMultiplier >= 0 ? rawMultiplier : 0;
 
-  return prediction;
+  return base * safeMultiplier;
 }
 
 function normalizeWeights<T extends string>(weights: Record<T, number>): Record<T, number> {
@@ -208,6 +202,39 @@ function normalizeWeights<T extends string>(weights: Record<T, number>): Record<
   ) as Record<T, number>;
 }
 
+function calculateHistoricalClamp(
+  values: number[],
+  fallback: number,
+): { mean: number; std: number; clampLimit: number } {
+  const sanitized = values.filter(value => Number.isFinite(value) && value > 0);
+  const fallbackMean = Number.isFinite(fallback) && fallback > 0 ? fallback : 1;
+  const mean =
+    sanitized.length > 0
+      ? sanitized.reduce((sum, value) => sum + value, 0) / sanitized.length
+      : fallbackMean;
+  const effectiveMean = mean > 0 ? mean : fallbackMean;
+
+  let variance = 0;
+  if (sanitized.length > 1) {
+    variance =
+      sanitized.reduce((sum, value) => sum + Math.pow(value - effectiveMean, 2), 0) /
+      sanitized.length;
+  } else {
+    variance = Math.pow(effectiveMean * 0.15, 2);
+  }
+
+  const std = Math.sqrt(Math.max(variance, 0));
+  const safeStd = std > 1e-6 ? std : 1e-6;
+  const limitBase = Math.max(effectiveMean * 3, effectiveMean + 3 * safeStd);
+  const clampLimit = Number.isFinite(limitBase) && limitBase > 0 ? limitBase : effectiveMean * 3;
+
+  return {
+    mean: effectiveMean,
+    std: safeStd,
+    clampLimit,
+  };
+}
+
 function formatDebugNumber(value: number, fractionDigits = 2): string {
   return Number.isFinite(value) ? value.toFixed(fractionDigits) : 'NaN';
 }
@@ -219,7 +246,9 @@ function logEnsembleDebug(
   weights: Record<string, number>,
   predictions: Record<string, number>,
   contributions: Record<string, number>,
-  resultBeforePost: number,
+  rawResult: number,
+  clampLimit: number | null,
+  clampedResult: number,
   finalResult: number,
 ): void {
   if (!isEnsembleDebugEnabled) {
@@ -229,9 +258,13 @@ function logEnsembleDebug(
   const dateLabel =
     date instanceof Date && !Number.isNaN(date.getTime()) ? format(date, 'yyyy-MM-dd') : 'unknown-date';
 
+  const clampLabel =
+    clampLimit !== null && Number.isFinite(clampLimit) ? formatDebugNumber(clampLimit) : 'none';
+
   console.debug(
     `[${context} ensemble][${dateLabel}] base=${formatDebugNumber(baseDayRevenue)} ` +
-      `raw=${formatDebugNumber(resultBeforePost)} final=${formatDebugNumber(finalResult)}`,
+      `raw=${formatDebugNumber(rawResult)} clamp=${clampLabel} ` +
+      `clamped=${formatDebugNumber(clampedResult)} final=${formatDebugNumber(finalResult)}`,
   );
 
   Object.keys(predictions).forEach(method => {
@@ -306,8 +339,11 @@ export function forecastRevenueForTransactions(transactions: Transaction[]): num
 
       const rawValue = featureMap[featureName] ?? 0;
       const mean = means[featureName] ?? 0;
-      const std = stds[featureName] ?? 1;
-      const normalized = std > 0 ? (rawValue - mean) / std : 0;
+      const stdCandidate = stds[featureName];
+      const std =
+        typeof stdCandidate === 'number' && Number.isFinite(stdCandidate) ? stdCandidate : 1;
+      const safeStd = std > 1e-6 ? std : 1e-6;
+      const normalized = (rawValue - mean) / safeStd;
       prediction += coefficient * normalized;
     });
 
@@ -738,16 +774,19 @@ async function generateEnhancedRevenueForecast(transactions: Transaction[]): Pro
 
   try {
     // Инициализируем внешний сервис данных
-    const externalDataService = new ExternalDataService({
-      openWeatherApiKey: process.env.OPENWEATHER_API_KEY || '',
-      exchangeRateApiKey: process.env.EXCHANGERATE_API_KEY || '',
-      calendarificApiKey: process.env.CALENDARIFIC_API_KEY || '',
-      googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY,
-      alphaVantageApiKey: process.env.ALPHA_VANTAGE_API_KEY,
-      fredApiKey: process.env.FRED_API_KEY,
-      newsApiKey: process.env.NEWS_API_KEY,
-      twitterApiKey: process.env.TWITTER_API_KEY
-    });
+    const externalDataService =
+      process.env.DISABLE_EXTERNAL_DATA === 'true'
+        ? undefined
+        : new ExternalDataService({
+            openWeatherApiKey: process.env.OPENWEATHER_API_KEY || '',
+            exchangeRateApiKey: process.env.EXCHANGERATE_API_KEY || '',
+            calendarificApiKey: process.env.CALENDARIFIC_API_KEY || '',
+            googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY,
+            alphaVantageApiKey: process.env.ALPHA_VANTAGE_API_KEY,
+            fredApiKey: process.env.FRED_API_KEY,
+            newsApiKey: process.env.NEWS_API_KEY,
+            twitterApiKey: process.env.TWITTER_API_KEY,
+          });
 
     // Инициализируем улучшенный ML движок с внешними данными
     const enhancedMLEngine = new EnhancedMLForecastingEngine(transactions, externalDataService);
@@ -1730,16 +1769,22 @@ function calculateEnsemblePrediction(
     0,
   );
   
+  const { clampLimit } = calculateHistoricalClamp(monthlyRevenues, baseDayRevenue);
+  const clampedEnsembleResult = Math.min(ensembleResult, clampLimit);
+
   // Применяем постобработку для улучшения точности
   const postProcessedResult = applyPostProcessing(
-    ensembleResult,
+    clampedEnsembleResult,
     baseDayRevenue,
     seasonalMultiplier,
     monthlyRevenues,
     dayOfWeek,
     date
   );
- 
+
+  const clampedFinalResult = Math.min(postProcessedResult, clampLimit);
+  const safeFinalResult = Math.max(0, clampedFinalResult);
+
   logEnsembleDebug(
     'standard',
     date,
@@ -1748,10 +1793,12 @@ function calculateEnsemblePrediction(
     absolutePredictions,
     contributions,
     ensembleResult,
-    postProcessedResult,
+    clampLimit,
+    clampedEnsembleResult,
+    safeFinalResult,
   );
 
-  return Math.max(0, postProcessedResult);
+  return safeFinalResult;
 }
 
 // Улучшенная многомерная линейная регрессия с регуляризацией L2
@@ -1949,8 +1996,9 @@ function calculateDeepNeuralPrediction(
     return sum + h2 * weights[i];
   }, 0.1);
   
+  const clampedOutput = Math.max(0, Math.min(1, output));
   // Денормализация результата
-  const prediction = denormalize(output, 0, 100000);
+  const prediction = denormalize(clampedOutput, 0, 100000);
   
   return Math.max(0, prediction);
 }
@@ -2198,14 +2246,24 @@ function applyPostProcessing(
   dayOfWeek: number,
   date: Date
 ): number {
-  // Проверка на выбросы
-  const historicalMean = monthlyRevenues.reduce((sum, r) => sum + r, 0) / monthlyRevenues.length;
-  const historicalStd = Math.sqrt(
-    monthlyRevenues.reduce((sum, r) => sum + Math.pow(r - historicalMean, 2), 0) / monthlyRevenues.length
-  );
+  const sanitizedRevenues = monthlyRevenues.filter(value => Number.isFinite(value) && value >= 0);
+  const fallbackMean = baseDayRevenue > 0 ? baseDayRevenue : 0;
+  const historicalMean =
+    sanitizedRevenues.length > 0
+      ? sanitizedRevenues.reduce((sum, r) => sum + r, 0) / sanitizedRevenues.length
+      : fallbackMean;
+  const variance =
+    sanitizedRevenues.length > 0
+      ? sanitizedRevenues.reduce((sum, r) => sum + Math.pow(r - historicalMean, 2), 0) /
+        sanitizedRevenues.length
+      : Math.pow(historicalMean * 0.15, 2);
+  const historicalStd = Math.sqrt(Math.max(variance, 0));
+  const safeStd = historicalStd > 1e-6 ? historicalStd : 1e-6;
+  const lowerBound = Math.max(0, historicalMean - 3 * safeStd);
+  const upperBound = historicalMean + 6 * safeStd;
   
   // Если прогноз слишком далек от исторических данных, применяем сглаживание
-  if (Math.abs(prediction - historicalMean) > 3 * historicalStd) {
+  if (Math.abs(prediction - historicalMean) > 3 * safeStd) {
     prediction = prediction * 0.7 + historicalMean * 0.3;
   }
   
@@ -2216,8 +2274,10 @@ function applyPostProcessing(
   // Финальная корректировка на основе сезонности
   const seasonalAdjustment = calculateFinalSeasonalAdjustment(date, dayOfWeek);
   prediction *= seasonalAdjustment;
+
+  const clampedByHistory = Math.max(lowerBound, Math.min(upperBound, prediction));
   
-  return prediction;
+  return clampedByHistory;
 }
 
 // Вспомогательные функции
@@ -3588,6 +3648,10 @@ function calculateEnhancedEnsemblePrediction(
     0,
   );
 
+  const { clampLimit } = calculateHistoricalClamp(monthlyRevenues, baseDayRevenue);
+  const clampedEnsembleResult = Math.min(ensembleResult, clampLimit);
+  const safeFinalResult = Math.max(0, clampedEnsembleResult);
+
   logEnsembleDebug(
     'enhanced',
     date,
@@ -3596,10 +3660,12 @@ function calculateEnhancedEnsemblePrediction(
     absolutePredictions,
     contributions,
     ensembleResult,
-    ensembleResult,
+    clampLimit,
+    clampedEnsembleResult,
+    safeFinalResult,
   );
 
-  return Math.max(0, ensembleResult);
+  return safeFinalResult;
 }
 
 // ===== УЛУЧШЕННЫЕ МЕТОДЫ ПРОГНОЗИРОВАНИЯ ДЛЯ МАЛОГО КОЛИЧЕСТВА ДАННЫХ =====

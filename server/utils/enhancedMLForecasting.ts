@@ -2,6 +2,52 @@ import { Transaction, ForecastData } from '@shared/schema';
 import { addDays, format, getDay, startOfDay, endOfDay, subDays, isWeekend } from 'date-fns';
 import { ExternalDataService, WeatherAPIResponse, EconomicIndicator, HolidayData, SocialSentiment } from './externalDataSources';
 
+const isEnsembleDebugEnabled = process.env.DEBUG_ENSEMBLE === 'true';
+
+function calculateHistoricalClamp(
+  values: number[],
+  fallback: number,
+): { mean: number; std: number; clampLimit: number } {
+  const sanitized = values.filter(value => Number.isFinite(value) && value > 0);
+  const fallbackMean = Number.isFinite(fallback) && fallback > 0 ? fallback : 1;
+  const mean =
+    sanitized.length > 0
+      ? sanitized.reduce((sum, value) => sum + value, 0) / sanitized.length
+      : fallbackMean;
+  const effectiveMean = mean > 0 ? mean : fallbackMean;
+
+  let variance = 0;
+  if (sanitized.length > 1) {
+    variance =
+      sanitized.reduce((sum, value) => sum + Math.pow(value - effectiveMean, 2), 0) /
+      sanitized.length;
+  } else {
+    variance = Math.pow(effectiveMean * 0.15, 2);
+  }
+
+  const std = Math.sqrt(Math.max(variance, 0));
+  const safeStd = std > 1e-6 ? std : 1e-6;
+  const limitBase = Math.max(effectiveMean * 3, effectiveMean + 3 * safeStd);
+  const clampLimit = Number.isFinite(limitBase) && limitBase > 0 ? limitBase : effectiveMean * 3;
+
+  return {
+    mean: effectiveMean,
+    std: safeStd,
+    clampLimit,
+  };
+}
+
+function formatDebugNumber(value: number, fractionDigits = 2): string {
+  return Number.isFinite(value) ? value.toFixed(fractionDigits) : 'NaN';
+}
+
+interface EnsembleDebugEntry {
+  normalizedWeights: number[];
+  rawWeights: number[];
+  contributions: number[];
+  prediction: number;
+}
+
 // Расширенные интерфейсы для ML моделей
 interface EnhancedTimeSeriesData {
   date: string;
@@ -81,6 +127,7 @@ export class EnhancedMLForecastingEngine {
   private externalDataService?: ExternalDataService;
   private timeSeriesData: EnhancedTimeSeriesData[] = [];
   private modelEnsemble: ModelEnsemble;
+  private lastAdaptiveDiagnostics: EnsembleDebugEntry[] = [];
 
   constructor(transactions: Transaction[], externalDataService?: ExternalDataService) {
     this.transactions = transactions;
@@ -423,26 +470,47 @@ export class EnhancedMLForecastingEngine {
   // Адаптивный ансамбль с динамическими весами
   private adaptiveEnsemble(predictions: number[][]): number[] {
     const result: number[] = [];
-    const numPredictions = predictions[0]?.length || 0;
+    const numPredictions = predictions[0]?.length ?? 0;
+    this.lastAdaptiveDiagnostics = [];
     
     // Рассчитываем точность каждой модели на исторических данных
     const modelAccuracy = this.calculateModelAccuracy(predictions);
     
     for (let i = 0; i < numPredictions; i++) {
+      const stepRawWeights: number[] = [];
       let weightedSum = 0;
       let totalWeight = 0;
       
       for (let j = 0; j < predictions.length; j++) {
         // Адаптивные веса на основе точности и базовых весов
         const baseWeight = this.modelEnsemble.models[j].weight;
-        const accuracyWeight = modelAccuracy[j] || 0.5;
-        const adaptiveWeight = (baseWeight * 0.7) + (accuracyWeight * 0.3);
+        const accuracyWeight = modelAccuracy[j] ?? 0.5;
+        const adaptiveWeight = baseWeight * 0.7 + accuracyWeight * 0.3;
         
-        weightedSum += predictions[j][i] * adaptiveWeight;
+        stepRawWeights.push(adaptiveWeight);
+        weightedSum += (predictions[j]?.[i] ?? 0) * adaptiveWeight;
         totalWeight += adaptiveWeight;
       }
       
-      result.push(totalWeight > 0 ? weightedSum / totalWeight : 0);
+      const normalizedWeights =
+        totalWeight > 0 && stepRawWeights.length > 0
+          ? stepRawWeights.map(weight => weight / totalWeight)
+          : stepRawWeights.length > 0
+            ? stepRawWeights.map(() => 1 / stepRawWeights.length)
+            : [];
+      const contributions = normalizedWeights.map(
+        (weight, idx) => weight * (predictions[idx]?.[i] ?? 0),
+      );
+      const prediction = totalWeight > 0 ? weightedSum / totalWeight : 0;
+      
+      this.lastAdaptiveDiagnostics.push({
+        normalizedWeights,
+        rawWeights: stepRawWeights,
+        contributions,
+        prediction,
+      });
+      
+      result.push(prediction);
     }
     
     return result;
@@ -552,12 +620,26 @@ export class EnhancedMLForecastingEngine {
     }
 
     // Получаем прогнозы от всех моделей
-    const modelPredictions = this.modelEnsemble.models.map(model => 
-      model.predict(timeSeriesData, futureData)
+    const rawModelPredictions = this.modelEnsemble.models.map(model =>
+      model.predict(timeSeriesData, futureData),
+    );
+
+    const revenueHistory = timeSeriesData.map(d => d.revenue);
+    const averageRevenue =
+      revenueHistory.length > 0
+        ? revenueHistory.reduce((sum, value) => sum + value, 0) / revenueHistory.length
+        : 0;
+    const latestRevenue = revenueHistory[revenueHistory.length - 1] ?? 0;
+    const baseRevenue = Math.max(averageRevenue, latestRevenue, 1);
+
+    const modelPredictions = rawModelPredictions.map(series =>
+      series.map(prediction => this.convertToAbsolutePrediction(prediction, baseRevenue)),
     );
 
     // Объединяем прогнозы
     const ensemblePredictions = this.modelEnsemble.metaModel(modelPredictions);
+    const { clampLimit } = calculateHistoricalClamp(revenueHistory, baseRevenue);
+    const clampedEnsemblePredictions = ensemblePredictions.map(pred => Math.min(pred, clampLimit));
 
     // Создаем финальные прогнозы
     const forecasts: ForecastData[] = [];
@@ -572,11 +654,50 @@ export class EnhancedMLForecastingEngine {
       const confidence = this.calculateEnhancedConfidence(timeSeriesData, modelPredictions, i);
       
       // Определение тренда
-      const trend = this.determineTrend(ensemblePredictions, i);
+      const trend = this.determineTrend(clampedEnsemblePredictions, i);
+
+      const rawPrediction = ensemblePredictions[i] ?? 0;
+      const clampedPrediction = clampedEnsemblePredictions[i] ?? 0;
+      const safePrediction = Math.max(0, clampedPrediction);
+
+      if (isEnsembleDebugEnabled) {
+        const dateLabel = format(forecastDate, 'yyyy-MM-dd');
+        console.debug(
+          `[enhanced ensemble][${dateLabel}] base=${formatDebugNumber(baseRevenue)} ` +
+            `raw=${formatDebugNumber(rawPrediction)} ` +
+            `clamp=${formatDebugNumber(clampLimit)} ` +
+            `clamped=${formatDebugNumber(clampedPrediction)} ` +
+            `final=${formatDebugNumber(safePrediction)}`,
+        );
+
+        const debugEntry = this.lastAdaptiveDiagnostics[i];
+        const modelCount = this.modelEnsemble.models.length;
+
+        this.modelEnsemble.models.forEach((model, idx) => {
+          const weight =
+            debugEntry && debugEntry.normalizedWeights[idx] !== undefined
+              ? debugEntry.normalizedWeights[idx]
+              : modelCount > 0
+                ? 1 / modelCount
+                : 0;
+          const prediction = modelPredictions[idx]?.[i] ?? 0;
+          const contribution =
+            debugEntry && debugEntry.contributions[idx] !== undefined
+              ? debugEntry.contributions[idx]
+              : weight * prediction;
+
+          console.debug(
+            `[enhanced ensemble][${dateLabel}] ${model.name}: ` +
+              `weight=${formatDebugNumber(weight, 4)} ` +
+              `prediction=${formatDebugNumber(prediction)} ` +
+              `contribution=${formatDebugNumber(contribution)}`,
+          );
+        });
+      }
       
       forecasts.push({
         date: format(forecastDate, 'yyyy-MM-dd'),
-        predictedRevenue: Math.round(Math.max(0, ensemblePredictions[i])),
+        predictedRevenue: Math.round(safePrediction),
         confidence: Math.round(confidence * 100) / 100,
         trend,
         weatherImpact: factors.weather,
@@ -908,23 +1029,223 @@ export class EnhancedMLForecastingEngine {
   }
 
   private trainXGBoost(features: number[][], targets: number[]): any {
-    // Упрощенная XGBoost модель
+    const featureCount = features[0]?.length ?? 0;
+    const baseline = this.calculateMeanValue(targets, 0);
+
+    if (featureCount === 0 || features.length === 0 || targets.length === 0) {
+      return { baseline, trees: [] };
+    }
+
+    const treeCount = Math.min(10, featureCount);
+    const trees: Array<{ feature: number; threshold: number; leftValue: number; rightValue: number }> = [];
+
+    for (let i = 0; i < treeCount; i++) {
+      const featureIndex = i % featureCount;
+      const featureValues = features
+        .map(row => (row && Number.isFinite(row[featureIndex]) ? row[featureIndex] : undefined))
+        .filter((value): value is number => value !== undefined);
+
+      const threshold = this.calculateMedianValue(featureValues, 0);
+      const { left, right } = this.partitionTargetsByThreshold(features, targets, featureIndex, threshold);
+
+      const leftMean = left.length > 0 ? this.calculateMeanValue(left, baseline) : baseline;
+      const rightMean = right.length > 0 ? this.calculateMeanValue(right, baseline) : baseline;
+
+      trees.push({
+        feature: featureIndex,
+        threshold,
+        leftValue: leftMean,
+        rightValue: rightMean,
+      });
+    }
+
     return {
-      trees: Array(10).fill(null).map(() => ({
-        feature: Math.floor(Math.random() * features[0].length),
-        threshold: Math.random() * 1000,
-        leftValue: Math.random() * 1000,
-        rightValue: Math.random() * 1000
-      }))
+      baseline,
+      trees,
     };
   }
 
   private predictXGBoost(model: any, features: number[]): number {
+    if (!model) {
+      return 0;
+    }
+
+    const baseline =
+      typeof model.baseline === 'number' && Number.isFinite(model.baseline) ? model.baseline : 0;
+
+    if (!Array.isArray(model.trees) || model.trees.length === 0) {
+      return baseline;
+    }
+
     const predictions = model.trees.map((tree: any) => {
-      const value = features[tree.feature];
-      return value < tree.threshold ? tree.leftValue : tree.rightValue;
+      if (!tree) {
+        return baseline;
+      }
+
+      const featureIndex =
+        typeof tree.feature === 'number' && tree.feature >= 0 ? tree.feature : 0;
+      const threshold =
+        typeof tree.threshold === 'number' && Number.isFinite(tree.threshold) ? tree.threshold : 0;
+      const rawValue = features?.[featureIndex];
+      const value = Number.isFinite(rawValue) ? rawValue : threshold;
+
+      const leftValue =
+        typeof tree.leftValue === 'number' && Number.isFinite(tree.leftValue)
+          ? tree.leftValue
+          : baseline;
+      const rightValue =
+        typeof tree.rightValue === 'number' && Number.isFinite(tree.rightValue)
+          ? tree.rightValue
+          : baseline;
+
+      return value < threshold ? leftValue : rightValue;
     });
-    return predictions.reduce((sum: number, val: number) => sum + val, 0) / predictions.length;
+
+    const meanPrediction = this.calculateMeanValue(predictions, baseline);
+    return Math.max(0, meanPrediction);
+  }
+
+  private calculateMeanValue(values: number[], fallback: number): number {
+    const finite = values.filter(value => Number.isFinite(value));
+    if (finite.length === 0) {
+      return fallback;
+    }
+
+    const sum = finite.reduce((acc, value) => acc + value, 0);
+    return sum / finite.length;
+  }
+
+  private convertToAbsolutePrediction(prediction: number, baseRevenue: number): number {
+    if (!Number.isFinite(prediction)) {
+      return Math.max(0, baseRevenue);
+    }
+
+    if (baseRevenue <= 0) {
+      return Math.max(0, prediction);
+    }
+
+    const positivePrediction = Math.max(prediction, 0);
+    const safeBase = Math.max(baseRevenue, 1e-6);
+    const rawMultiplier =
+      positivePrediction <= 10 ? positivePrediction : positivePrediction / safeBase;
+    const safeMultiplier =
+      Number.isFinite(rawMultiplier) && rawMultiplier >= 0 ? rawMultiplier : 0;
+
+    return safeBase * safeMultiplier;
+  }
+
+  private calculateMedianValue(values: number[], fallback: number): number {
+    const finite = values.filter(value => Number.isFinite(value)).sort((a, b) => a - b);
+    if (finite.length === 0) {
+      return fallback;
+    }
+
+    const mid = Math.floor(finite.length / 2);
+    if (finite.length % 2 === 0 && mid > 0) {
+      return (finite[mid - 1] + finite[mid]) / 2;
+    }
+    return finite[mid];
+  }
+
+  private partitionTargetsByThreshold(
+    features: number[][],
+    targets: number[],
+    featureIndex: number,
+    threshold: number,
+  ): { left: number[]; right: number[] } {
+    const left: number[] = [];
+    const right: number[] = [];
+    const safeThreshold = Number.isFinite(threshold) ? threshold : 0;
+
+    for (let i = 0; i < targets.length; i++) {
+      const target = targets[i];
+      if (!Number.isFinite(target)) {
+        continue;
+      }
+
+      const featureRow = features[i];
+      const rawValue = featureRow?.[featureIndex];
+      const value = Number.isFinite(rawValue) ? (rawValue as number) : safeThreshold;
+
+      if (value < safeThreshold) {
+        left.push(target);
+      } else {
+        right.push(target);
+      }
+    }
+
+    if (left.length === 0 && right.length === 0) {
+      const fallbackTargets = targets.filter(value => Number.isFinite(value));
+      return { left: [], right: fallbackTargets };
+    }
+
+    return { left, right };
+  }
+
+  private estimateSeasonalityStrength(data: EnhancedTimeSeriesData[]): number {
+    if (data.length < 7) {
+      return 0.1;
+    }
+
+    const dayGroups = new Map<number, number[]>();
+    data.forEach(entry => {
+      if (!Number.isFinite(entry.revenue)) {
+        return;
+      }
+      const bucket = dayGroups.get(entry.dayOfWeek) ?? [];
+      bucket.push(entry.revenue);
+      dayGroups.set(entry.dayOfWeek, bucket);
+    });
+
+    if (dayGroups.size === 0) {
+      return 0.1;
+    }
+
+    const averages = Array.from(dayGroups.values()).map(values =>
+      this.calculateMeanValue(values, 0),
+    );
+
+    const meanOfMeans = this.calculateMeanValue(averages, 0);
+    if (meanOfMeans <= 0) {
+      return 0.1;
+    }
+
+    const variance =
+      averages.reduce((sum, value) => sum + Math.pow(value - meanOfMeans, 2), 0) /
+      averages.length;
+    const std = Math.sqrt(Math.max(variance, 0));
+    const safeStd = std > 1e-6 ? std : 1e-6;
+
+    return Math.min(safeStd / Math.max(meanOfMeans, 1e-6), 1);
+  }
+
+  private calculateRecentGrowthRate(data: EnhancedTimeSeriesData[]): number {
+    if (data.length < 14) {
+      return 0;
+    }
+
+    const recent = data
+      .slice(-7)
+      .map(entry => entry.revenue)
+      .filter(value => Number.isFinite(value));
+    const previous = data
+      .slice(-14, -7)
+      .map(entry => entry.revenue)
+      .filter(value => Number.isFinite(value));
+
+    if (recent.length === 0 || previous.length === 0) {
+      return 0;
+    }
+
+    const recentMean = this.calculateMeanValue(recent, 0);
+    const previousMean = this.calculateMeanValue(previous, 0);
+
+    if (previousMean <= 0) {
+      return 0;
+    }
+
+    const growth = (recentMean - previousMean) / previousMean;
+    return Math.min(Math.abs(growth), 1);
   }
 
   // Gradient Boosting модель
@@ -1222,7 +1543,10 @@ export class EnhancedMLForecastingEngine {
   // Обновление весов моделей на основе новых данных
   private updateModelWeights(timeSeriesData: EnhancedTimeSeriesData[]): void {
     // Простая логика обновления весов на основе производительности
-    const modelPerformance = this.evaluateModelPerformance(timeSeriesData);
+    const performanceRaw = this.evaluateModelPerformance(timeSeriesData);
+    const modelPerformance = performanceRaw.map(perf =>
+      Number.isFinite(perf) && perf > 0 ? perf : 1e-6,
+    );
     
     // Нормализуем веса
     const totalPerformance = modelPerformance.reduce((sum, perf) => sum + perf, 0);
@@ -1230,16 +1554,73 @@ export class EnhancedMLForecastingEngine {
       for (let i = 0; i < this.modelEnsemble.models.length; i++) {
         this.modelEnsemble.models[i].weight = modelPerformance[i] / totalPerformance;
       }
+    } else if (this.modelEnsemble.models.length > 0) {
+      const uniformWeight = 1 / this.modelEnsemble.models.length;
+      for (let i = 0; i < this.modelEnsemble.models.length; i++) {
+        this.modelEnsemble.models[i].weight = uniformWeight;
+      }
     }
   }
 
   private evaluateModelPerformance(data: EnhancedTimeSeriesData[]): number[] {
-    // Упрощенная оценка производительности моделей
-    // В реальной реализации здесь был бы кросс-валидация
-    return this.modelEnsemble.models.map((_, index) => {
-      // Имитируем разную производительность моделей
-      const basePerformance = [0.25, 0.25, 0.2, 0.15, 0.15, 0.05];
-      return basePerformance[index] + (Math.random() - 0.5) * 0.1;
+    if (this.modelEnsemble.models.length === 0) {
+      return [];
+    }
+
+    const revenues = data
+      .map(entry => entry.revenue)
+      .filter(value => Number.isFinite(value) && value > 0);
+
+    if (revenues.length === 0) {
+      return this.modelEnsemble.models.map(() => 1);
+    }
+
+    const meanRevenue = this.calculateMeanValue(revenues, 1);
+    const variance =
+      revenues.reduce((sum, value) => sum + Math.pow(value - meanRevenue, 2), 0) / revenues.length;
+    const std = Math.sqrt(Math.max(variance, 0));
+    const safeStd = std > 1e-6 ? std : 1e-6;
+    const volatility = safeStd / Math.max(meanRevenue, 1e-6);
+
+    const trendStrength = Math.abs(this.calculateTrendFactor(data));
+    const seasonalityStrength = this.estimateSeasonalityStrength(data);
+    const recentGrowth = this.calculateRecentGrowthRate(data);
+
+    const basePerformance = this.modelEnsemble.models.map(model =>
+      model.weight > 0 ? model.weight : 1 / this.modelEnsemble.models.length,
+    );
+
+    return this.modelEnsemble.models.map((model, index) => {
+      let score = basePerformance[index] ?? 1;
+
+      switch (model.name) {
+        case 'ARIMA':
+          score *= 1 + Math.min(seasonalityStrength, 0.5);
+          score *= 1 + Math.max(0, 0.3 - volatility);
+          break;
+        case 'Prophet':
+          score *= 1 + Math.min(trendStrength, 0.5);
+          score *= 1 + Math.min(seasonalityStrength, 0.4);
+          break;
+        case 'LSTM':
+          score *= 1 + Math.min(trendStrength + seasonalityStrength, 0.6);
+          score *= 1 + Math.min(volatility, 0.4);
+          break;
+        case 'RandomForest':
+          score *= 1 + Math.min(volatility, 0.4);
+          score *= 1 + Math.min(recentGrowth, 0.3);
+          break;
+        case 'XGBoost':
+          score *= 1 + Math.min(volatility + recentGrowth, 0.6);
+          break;
+        case 'GradientBoosting':
+          score *= 1 + Math.min(recentGrowth, 0.5);
+          break;
+        default:
+          break;
+      }
+
+      return Math.max(score, 1e-6);
     });
   }
 
