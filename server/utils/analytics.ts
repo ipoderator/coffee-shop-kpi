@@ -44,6 +44,23 @@ import { SimpleMLForecastingEngine } from './simpleMLForecasting';
 import { EnhancedMLForecastingEngine } from './enhancedMLForecasting';
 import { ExternalDataService } from './externalDataSources';
 import { AdvancedAnalyticsEngine } from './advancedAnalytics';
+import { engineerForecastFeatures } from './salesFeatures';
+
+export interface SalesModelMetadata {
+  version: number;
+  trainedAt?: string;
+  trainingSamples?: number;
+  featuresUsed?: number;
+  lambda?: number;
+  targetMean?: number;
+  targetStd?: number;
+  checksMean?: number;
+  metrics?: {
+    mae: number;
+    rmse: number;
+    r2: number;
+  };
+}
 
 export interface SalesModel {
   intercept: number;
@@ -53,7 +70,10 @@ export interface SalesModel {
     mean?: Record<string, number>;
     std?: Record<string, number>;
   };
+  metadata?: SalesModelMetadata;
 }
+
+export const SALES_MODEL_VERSION = 2;
 
 let cachedSalesModel: SalesModel | null = null;
 
@@ -72,10 +92,30 @@ function loadSalesModel(): SalesModel {
   try {
     const raw = readFileSync(filePath, 'utf-8');
     const parsed = JSON.parse(raw) as Partial<SalesModel>;
+    const metadataCandidate = parsed?.metadata;
+    const metadata =
+      metadataCandidate && typeof metadataCandidate === 'object'
+        ? (metadataCandidate as SalesModelMetadata)
+        : undefined;
+    const modelVersion = metadata?.version ?? 1;
+
+    if (modelVersion !== SALES_MODEL_VERSION) {
+      console.warn(
+        `Sales model metadata version ${modelVersion} is incompatible with expected version ${SALES_MODEL_VERSION}. Baseline forecasts will be used until the model is retrained.`,
+      );
+      cachedSalesModel = {
+        intercept: typeof metadata?.targetMean === 'number' ? metadata.targetMean : 0,
+        coefficients: {},
+        featureOrder: [],
+        metadata,
+      };
+      return cachedSalesModel;
+    }
 
     const coefficientsEntries = parsed?.coefficients
-      ? Object.entries(parsed.coefficients)
-          .filter((entry): entry is [string, number] => typeof entry[0] === 'string' && typeof entry[1] === 'number')
+      ? Object.entries(parsed.coefficients).filter(
+          (entry): entry is [string, number] => typeof entry[0] === 'string' && typeof entry[1] === 'number',
+        )
       : [];
 
     const coefficients = Object.fromEntries(coefficientsEntries);
@@ -85,13 +125,19 @@ function loadSalesModel(): SalesModel {
         ? parsed.featureOrder.filter((name): name is string => typeof name === 'string')
         : Object.keys(coefficients);
 
-    const intercept = typeof parsed?.intercept === 'number' ? parsed.intercept : 0;
+    const intercept =
+      typeof parsed?.intercept === 'number'
+        ? parsed.intercept
+        : typeof metadata?.targetMean === 'number'
+          ? metadata.targetMean
+          : 0;
 
     cachedSalesModel = {
       intercept,
       coefficients,
       featureOrder,
       normalization: parsed?.normalization,
+      metadata,
     };
   } catch (error) {
     console.warn('Failed to load sales model, falling back to baseline forecasts.', error);
@@ -99,50 +145,114 @@ function loadSalesModel(): SalesModel {
       intercept: 0,
       coefficients: {},
       featureOrder: [],
+      metadata: undefined,
     };
   }
 
   return cachedSalesModel;
 }
 
-export function transactionToFeatureMap(transaction: Transaction): Record<string, number> {
-  const date = transaction.date instanceof Date ? transaction.date : new Date(transaction.date);
-  const amount = transaction.amount ?? 0;
-  const cash = transaction.cashPayment ?? 0;
-  const terminal = transaction.terminalPayment ?? 0;
-  const qr = transaction.qrPayment ?? 0;
-  const sbp = transaction.sbpPayment ?? 0;
-  const refunds = {
-    cash: transaction.refundCashPayment ?? 0,
-    terminal: transaction.refundTerminalPayment ?? 0,
-    qr: transaction.refundQrPayment ?? 0,
-    sbp: transaction.refundSbpPayment ?? 0,
-  };
-  const totalPositive = cash + terminal + qr + sbp;
+export function clearSalesModelCache(): void {
+  cachedSalesModel = null;
+}
 
-  return {
-    year: transaction.year ?? date.getFullYear(),
-    month: transaction.month ?? date.getMonth() + 1,
-    dayOfMonth: date.getDate(),
-    dayOfWeek: getDay(date),
-    amount,
-    checksCount: transaction.checksCount ?? 1,
-    cashPayment: cash,
-    terminalPayment: terminal,
-    qrPayment: qr,
-    sbpPayment: sbp,
-    totalPositivePayments: totalPositive,
-    refundChecksCount: transaction.refundChecksCount ?? 0,
-    refundCashPayment: refunds.cash,
-    refundTerminalPayment: refunds.terminal,
-    refundQrPayment: refunds.qr,
-    refundSbpPayment: refunds.sbp,
-    netRevenue: amount - (refunds.cash + refunds.terminal + refunds.qr + refunds.sbp),
-    cashShare: totalPositive > 0 ? cash / totalPositive : 0,
-    terminalShare: totalPositive > 0 ? terminal / totalPositive : 0,
-    qrShare: totalPositive > 0 ? qr / totalPositive : 0,
-    sbpShare: totalPositive > 0 ? sbp / totalPositive : 0,
-  };
+const isEnsembleDebugEnabled = process.env.DEBUG_ENSEMBLE === 'true';
+
+function ensureAbsolutePrediction(prediction: number, baseDayRevenue: number): number {
+  if (!Number.isFinite(prediction)) {
+    return Math.max(0, baseDayRevenue);
+  }
+
+  if (prediction <= 0) {
+    return 0;
+  }
+
+  if (baseDayRevenue <= 0) {
+    return prediction;
+  }
+
+  if (prediction < 5) {
+    const converted = baseDayRevenue * prediction;
+    const diffOriginal = Math.abs(prediction - baseDayRevenue);
+    const diffConverted = Math.abs(converted - baseDayRevenue);
+    if (diffConverted < diffOriginal) {
+      return Math.max(0, converted);
+    }
+  }
+
+  return prediction;
+}
+
+function normalizeWeights<T extends string>(weights: Record<T, number>): Record<T, number> {
+  const entries = Object.entries(weights) as [T, number][];
+  if (entries.length === 0) {
+    return weights;
+  }
+
+  const sanitized: [T, number][] = entries.map(([key, value]) => {
+    if (!Number.isFinite(value) || value <= 0) {
+      return [key, 0];
+    }
+    return [key, value];
+  });
+
+  const total = sanitized.reduce((sum, [, value]) => sum + value, 0);
+
+  if (total <= 0) {
+    const uniformWeight = 1 / sanitized.length;
+    return Object.fromEntries(sanitized.map(([key]) => [key, uniformWeight])) as Record<T, number>;
+  }
+
+  return Object.fromEntries(
+    sanitized.map(([key, value]) => [key, value / total]),
+  ) as Record<T, number>;
+}
+
+function formatDebugNumber(value: number, fractionDigits = 2): string {
+  return Number.isFinite(value) ? value.toFixed(fractionDigits) : 'NaN';
+}
+
+function logEnsembleDebug(
+  context: 'standard' | 'enhanced',
+  date: Date,
+  baseDayRevenue: number,
+  weights: Record<string, number>,
+  predictions: Record<string, number>,
+  contributions: Record<string, number>,
+  resultBeforePost: number,
+  finalResult: number,
+): void {
+  if (!isEnsembleDebugEnabled) {
+    return;
+  }
+
+  const dateLabel =
+    date instanceof Date && !Number.isNaN(date.getTime()) ? format(date, 'yyyy-MM-dd') : 'unknown-date';
+
+  console.debug(
+    `[${context} ensemble][${dateLabel}] base=${formatDebugNumber(baseDayRevenue)} ` +
+      `raw=${formatDebugNumber(resultBeforePost)} final=${formatDebugNumber(finalResult)}`,
+  );
+
+  Object.keys(predictions).forEach(method => {
+    const weight = weights[method] ?? 0;
+    const prediction = predictions[method] ?? 0;
+    const contribution = contributions[method] ?? 0;
+    console.debug(
+      `[${context} ensemble][${dateLabel}] ${method}: ` +
+        `weight=${formatDebugNumber(weight, 4)} ` +
+        `prediction=${formatDebugNumber(prediction)} ` +
+        `contribution=${formatDebugNumber(contribution)}`,
+    );
+  });
+}
+
+function extractAmount(transaction: Transaction): number {
+  const amount = (transaction as any).amount;
+  if (typeof amount === 'number' && Number.isFinite(amount)) {
+    return amount;
+  }
+  return 0;
 }
 
 export function forecastRevenueForTransactions(transactions: Transaction[]): number[] {
@@ -151,49 +261,77 @@ export function forecastRevenueForTransactions(transactions: Transaction[]): num
   }
 
   const model = loadSalesModel();
-  const coefficients = model.coefficients;
-  const featureNames =
-    model.featureOrder.length > 0 ? model.featureOrder : Object.keys(coefficients);
+  const metadata = model.metadata;
+  const safeActuals = transactions.map(tx => Math.max(0, extractAmount(tx)));
 
-  if (featureNames.length === 0) {
-    return transactions.map(tx => Math.max(0, tx.amount ?? 0));
+  const averageActual =
+    safeActuals.length > 0
+      ? safeActuals.reduce((sum, value) => sum + value, 0) / safeActuals.length
+      : 0;
+
+  const defaultPredictionRaw =
+    typeof metadata?.targetMean === 'number' ? metadata.targetMean : averageActual;
+  const defaultPrediction = Math.max(0, defaultPredictionRaw);
+
+  const engineered = engineerForecastFeatures(transactions, {
+    defaultRevenue: metadata?.targetMean,
+    defaultChecks: metadata?.checksMean,
+  });
+
+  if (engineered.featureMaps.length === 0) {
+    return safeActuals;
+  }
+
+  const featureOrder =
+    model.featureOrder.length > 0 ? model.featureOrder : engineered.featureNames;
+
+  if (featureOrder.length === 0 || Object.keys(model.coefficients).length === 0) {
+    return safeActuals;
   }
 
   const normalization = model.normalization ?? {};
   const means = normalization.mean ?? {};
   const stds = normalization.std ?? {};
 
-  const featureMatrix = transactions.map(transaction => {
-    const featureMap = transactionToFeatureMap(transaction);
-    return featureNames.map(name => featureMap[name] ?? 0);
-  });
-
-  return featureMatrix.map((row, index) => {
+  const aggregatePredictions = engineered.featureMaps.map(featureMap => {
     let prediction = model.intercept;
 
-    row.forEach((value, columnIndex) => {
-      const featureName = featureNames[columnIndex];
-      const coefficient = coefficients[featureName] ?? 0;
-
-      let featureValue = value;
-      const mean = means[featureName];
-      const std = stds[featureName];
-
-      if (typeof std === 'number' && std > 0) {
-        featureValue =
-          (value - (typeof mean === 'number' ? mean : 0)) / std;
+    featureOrder.forEach(featureName => {
+      const coefficient = model.coefficients[featureName] ?? 0;
+      if (coefficient === 0) {
+        if (!(featureName in featureMap)) {
+          return;
+        }
       }
 
-      prediction += coefficient * featureValue;
+      const rawValue = featureMap[featureName] ?? 0;
+      const mean = means[featureName] ?? 0;
+      const std = stds[featureName] ?? 1;
+      const normalized = std > 0 ? (rawValue - mean) / std : 0;
+      prediction += coefficient * normalized;
     });
 
     if (!Number.isFinite(prediction)) {
-      const fallback = transactions[index]?.amount ?? 0;
-      return Math.max(0, fallback);
+      return defaultPrediction;
     }
 
     return Math.max(0, prediction);
   });
+
+  const predictions = safeActuals.slice();
+
+  engineered.indexMap.forEach((originalIndices, aggregateIndex) => {
+    const aggregatePrediction = aggregatePredictions[aggregateIndex] ?? defaultPrediction;
+    const value = Number.isFinite(aggregatePrediction) ? Math.max(0, aggregatePrediction) : defaultPrediction;
+
+    originalIndices.forEach((originalIndex: number) => {
+      if (originalIndex >= 0 && originalIndex < predictions.length) {
+        predictions[originalIndex] = value;
+      }
+    });
+  });
+
+  return predictions;
 }
 
 export async function calculateAnalytics(transactions: Transaction[]): Promise<AnalyticsResponse> {
@@ -1547,31 +1685,50 @@ function calculateEnsemblePrediction(
     date
   );
   
+  const rawPredictions = {
+    linear: linearPrediction,
+    exponential: exponentialPrediction,
+    movingAverage: movingAveragePrediction,
+    neural: neuralNetworkPrediction,
+    timeSeries: timeSeriesPrediction,
+    gradientBoosting: gradientBoostingPrediction,
+    svm: svmPrediction,
+  };
+
+  const absolutePredictions = Object.fromEntries(
+    Object.entries(rawPredictions).map(([key, value]) => [key, ensureAbsolutePrediction(value, baseDayRevenue)]),
+  ) as typeof rawPredictions;
+
   // Адаптивные веса на основе исторической точности методов
   const adaptiveWeights = calculateAdaptiveWeights(
     monthlyRevenues,
     dayOfWeek,
     date,
-    {
-      linear: linearPrediction,
-      exponential: exponentialPrediction,
-      movingAverage: movingAveragePrediction,
-      neural: neuralNetworkPrediction,
-      timeSeries: timeSeriesPrediction,
-      gradientBoosting: gradientBoostingPrediction,
-      svm: svmPrediction
-    }
+    absolutePredictions
   );
+
+  const normalizedWeights = normalizeWeights(adaptiveWeights);
   
-  // Взвешенное усреднение результатов с адаптивными весами
-  const ensembleResult = 
-    linearPrediction * adaptiveWeights.linear +
-    exponentialPrediction * adaptiveWeights.exponential +
-    movingAveragePrediction * adaptiveWeights.movingAverage +
-    neuralNetworkPrediction * adaptiveWeights.neural +
-    timeSeriesPrediction * adaptiveWeights.timeSeries +
-    gradientBoostingPrediction * adaptiveWeights.gradientBoosting +
-    svmPrediction * adaptiveWeights.svm;
+  const contributions: Record<keyof typeof absolutePredictions, number> = {
+    linear: 0,
+    exponential: 0,
+    movingAverage: 0,
+    neural: 0,
+    timeSeries: 0,
+    gradientBoosting: 0,
+    svm: 0,
+  };
+  
+  const ensembleResult = (Object.keys(absolutePredictions) as Array<keyof typeof absolutePredictions>).reduce(
+    (sum, method) => {
+      const weight = normalizedWeights[method] ?? 0;
+      const prediction = absolutePredictions[method];
+      const contribution = prediction * weight;
+      contributions[method] = contribution;
+      return sum + contribution;
+    },
+    0,
+  );
   
   // Применяем постобработку для улучшения точности
   const postProcessedResult = applyPostProcessing(
@@ -1582,7 +1739,18 @@ function calculateEnsemblePrediction(
     dayOfWeek,
     date
   );
-  
+ 
+  logEnsembleDebug(
+    'standard',
+    date,
+    baseDayRevenue,
+    normalizedWeights,
+    absolutePredictions,
+    contributions,
+    ensembleResult,
+    postProcessedResult,
+  );
+
   return Math.max(0, postProcessedResult);
 }
 
@@ -3387,13 +3555,50 @@ function calculateEnhancedEnsemblePrediction(
     timeSeries: 0.15
   };
   
-  const ensembleResult = 
-    linearPrediction * weights.linear +
-    exponentialPrediction * weights.exponential +
-    movingAveragePrediction * weights.movingAverage +
-    neuralNetworkPrediction * weights.neural +
-    timeSeriesPrediction * weights.timeSeries;
-  
+  const rawPredictions = {
+    linear: linearPrediction,
+    exponential: exponentialPrediction,
+    movingAverage: movingAveragePrediction,
+    neural: neuralNetworkPrediction,
+    timeSeries: timeSeriesPrediction,
+  };
+
+  const absolutePredictions = Object.fromEntries(
+    Object.entries(rawPredictions).map(([key, value]) => [key, ensureAbsolutePrediction(value, baseDayRevenue)]),
+  ) as typeof rawPredictions;
+
+  const normalizedWeights = normalizeWeights(weights);
+
+  const contributions: Record<keyof typeof absolutePredictions, number> = {
+    linear: 0,
+    exponential: 0,
+    movingAverage: 0,
+    neural: 0,
+    timeSeries: 0,
+  };
+
+  const ensembleResult = (Object.keys(absolutePredictions) as Array<keyof typeof absolutePredictions>).reduce(
+    (sum, method) => {
+      const weight = normalizedWeights[method] ?? 0;
+      const prediction = absolutePredictions[method];
+      const contribution = prediction * weight;
+      contributions[method] = contribution;
+      return sum + contribution;
+    },
+    0,
+  );
+
+  logEnsembleDebug(
+    'enhanced',
+    date,
+    baseDayRevenue,
+    normalizedWeights,
+    absolutePredictions,
+    contributions,
+    ensembleResult,
+    ensembleResult,
+  );
+
   return Math.max(0, ensembleResult);
 }
 
