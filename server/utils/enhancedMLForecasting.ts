@@ -639,34 +639,83 @@ export class EnhancedMLForecastingEngine {
     // Объединяем прогнозы
     const ensemblePredictions = this.modelEnsemble.metaModel(modelPredictions);
     const { clampLimit } = calculateHistoricalClamp(revenueHistory, baseRevenue);
-    const clampedEnsemblePredictions = ensemblePredictions.map(pred => Math.min(pred, clampLimit));
+    const seasonalityStats = this.computeSeasonalityStats(timeSeriesData);
 
     // Создаем финальные прогнозы
     const forecasts: ForecastData[] = [];
+    const finalPredictions: number[] = [];
     for (let i = 0; i < days; i++) {
       const forecastDate = addDays(lastDate, i + 1);
       const future = futureData[i];
+      const dayOfWeek = getDay(forecastDate);
+      const month = forecastDate.getMonth();
+
+      const rawPrediction = ensemblePredictions[i] ?? baseRevenue;
+      const dowMultiplier = seasonalityStats.dowMultipliers[dayOfWeek] ?? 1;
+      const monthMultiplier = seasonalityStats.monthMultipliers[month] ?? 1;
+      const baselineMultiplier = this.combineMultipliers(
+        [
+          { value: dowMultiplier, weight: 0.7 },
+          { value: monthMultiplier, weight: 0.3 },
+        ],
+        1,
+      );
+      const baselineSeasonalPrediction =
+        seasonalityStats.overallAverage > 0
+          ? seasonalityStats.overallAverage * baselineMultiplier
+          : baseRevenue;
       
       // Расчет факторов влияния
       const factors = this.calculateEnhancedInfluenceFactors(forecastDate, timeSeriesData, future);
+
+      const seasonalMultiplier = this.clampMultiplier(factors.seasonal ?? 1, 0.5, 1.5);
+      const trendMultiplier = this.clampMultiplier(1 + (factors.trend ?? 0), 0.7, 1.3);
+      const weatherMultiplier = this.clampMultiplier(1 + (factors.weather ?? 0), 0.7, 1.2);
+      const holidayMultiplier = this.clampMultiplier(1 + (factors.holiday ?? 0), 0.85, 1.2);
+      const timeOfMonthMultiplier = this.clampMultiplier(1 + (factors.timeOfMonth ?? 0), 0.8, 1.2);
+      const historicalMultiplier = this.clampMultiplier(
+        1 + (factors.historicalPattern ?? 0),
+        0.8,
+        1.25,
+      );
+      const economicMultiplier = this.clampMultiplier(1 + (factors.economicCycle ?? 0), 0.9, 1.1);
+      const sentimentMultiplier = this.clampMultiplier(1 + (factors.socialSentiment ?? 0), 0.9, 1.1);
+
+      const compositeMultiplier = this.combineMultipliers(
+        [
+          { value: seasonalMultiplier, weight: 0.35 },
+          { value: trendMultiplier, weight: 0.2 },
+          { value: weatherMultiplier, weight: 0.1 },
+          { value: holidayMultiplier, weight: 0.05 },
+          { value: timeOfMonthMultiplier, weight: 0.1 },
+          { value: historicalMultiplier, weight: 0.1 },
+          { value: economicMultiplier, weight: 0.05 },
+          { value: sentimentMultiplier, weight: 0.05 },
+        ],
+        1,
+      );
+
+      const adjustedRaw = Math.max(0, rawPrediction) * compositeMultiplier;
+      const blendedPrediction = this.blendPredictions(adjustedRaw, baselineSeasonalPrediction, 0.4);
+      const clampedPrediction = Math.min(blendedPrediction, clampLimit);
+      const safePrediction = Math.max(0, clampedPrediction);
+
+      finalPredictions.push(safePrediction);
       
       // Расчет уверенности
       const confidence = this.calculateEnhancedConfidence(timeSeriesData, modelPredictions, i);
       
       // Определение тренда
-      const trend = this.determineTrend(clampedEnsemblePredictions, i);
-
-      const rawPrediction = ensemblePredictions[i] ?? 0;
-      const clampedPrediction = clampedEnsemblePredictions[i] ?? 0;
-      const safePrediction = Math.max(0, clampedPrediction);
+      const trend = this.determineTrend(finalPredictions, i);
 
       if (isEnsembleDebugEnabled) {
         const dateLabel = format(forecastDate, 'yyyy-MM-dd');
         console.debug(
           `[enhanced ensemble][${dateLabel}] base=${formatDebugNumber(baseRevenue)} ` +
             `raw=${formatDebugNumber(rawPrediction)} ` +
+            `baseline=${formatDebugNumber(baselineSeasonalPrediction)} ` +
+            `multiplier=${formatDebugNumber(compositeMultiplier, 3)} ` +
             `clamp=${formatDebugNumber(clampLimit)} ` +
-            `clamped=${formatDebugNumber(clampedPrediction)} ` +
             `final=${formatDebugNumber(safePrediction)}`,
         );
 
@@ -842,6 +891,104 @@ export class EnhancedMLForecastingEngine {
       const monthAvg = revenue / counts[month];
       return monthAvg / avgRevenue; // Нормализуем относительно общего среднего
     });
+  }
+
+  private computeSeasonalityStats(data: EnhancedTimeSeriesData[]): {
+    dowMultipliers: number[];
+    monthMultipliers: number[];
+    overallAverage: number;
+  } {
+    if (data.length === 0) {
+      return {
+        dowMultipliers: new Array(7).fill(1),
+        monthMultipliers: new Array(12).fill(1),
+        overallAverage: 0,
+      };
+    }
+
+    const dowTotals = new Array(7).fill(0);
+    const dowCounts = new Array(7).fill(0);
+    const monthTotals = new Array(12).fill(0);
+    const monthCounts = new Array(12).fill(0);
+    let revenueSum = 0;
+
+    data.forEach(entry => {
+      const revenue = Number.isFinite(entry.revenue) ? entry.revenue : 0;
+      revenueSum += revenue;
+
+      const dow = entry.dayOfWeek;
+      if (dow >= 0 && dow < 7) {
+        dowTotals[dow] += revenue;
+        dowCounts[dow]++;
+      }
+
+      const month = entry.month;
+      if (month >= 0 && month < 12) {
+        monthTotals[month] += revenue;
+        monthCounts[month]++;
+      }
+    });
+
+    const overallAverage = revenueSum / data.length;
+    const safeAverage = overallAverage > 0 ? overallAverage : 1;
+
+    const dowMultipliers = dowTotals.map((total, index) => {
+      if (dowCounts[index] === 0) return 1;
+      const average = total / dowCounts[index];
+      const ratio = average / safeAverage;
+      return Number.isFinite(ratio) && ratio > 0 ? ratio : 1;
+    });
+
+    const monthMultipliers = monthTotals.map((total, index) => {
+      if (monthCounts[index] === 0) return 1;
+      const average = total / monthCounts[index];
+      const ratio = average / safeAverage;
+      return Number.isFinite(ratio) && ratio > 0 ? ratio : 1;
+    });
+
+    return {
+      dowMultipliers,
+      monthMultipliers,
+      overallAverage,
+    };
+  }
+
+  private combineMultipliers(
+    entries: Array<{ value: number | undefined; weight: number }>,
+    fallback: number,
+  ): number {
+    let weightedSum = 0;
+    let totalWeight = 0;
+
+    entries.forEach(entry => {
+      const { value, weight } = entry;
+      if (!Number.isFinite(weight) || weight <= 0) return;
+      if (!Number.isFinite(value) || value === undefined) return;
+
+      weightedSum += value * weight;
+      totalWeight += weight;
+    });
+
+    if (totalWeight <= 0) {
+      return fallback;
+    }
+
+    const combined = weightedSum / totalWeight;
+    return Number.isFinite(combined) && combined > 0 ? combined : fallback;
+  }
+
+  private clampMultiplier(value: number, min: number, max: number): number {
+    const safeValue = Number.isFinite(value) ? value : 1;
+    const lowerBound = Number.isFinite(min) ? min : 0;
+    const upperBound = Number.isFinite(max) ? max : lowerBound;
+    return Math.min(upperBound, Math.max(lowerBound, safeValue));
+  }
+
+  private blendPredictions(primary: number, secondary: number, alpha: number): number {
+    const safeAlpha = Number.isFinite(alpha) ? Math.min(Math.max(alpha, 0), 1) : 0.5;
+    const safePrimary = Number.isFinite(primary) ? primary : 0;
+    const safeSecondary = Number.isFinite(secondary) ? secondary : 0;
+    return safePrimary * safeAlpha + safeSecondary * (1 - safeAlpha);
   }
 
   private calculateYearlySeasonality(data: EnhancedTimeSeriesData[]): number[] {

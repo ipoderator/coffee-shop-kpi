@@ -13,14 +13,44 @@ const EXPORT_ICON_SELECTOR = '.btn.btn-success i.fa.fa-download';
 const CRON_SCHEDULE = '0 22 * * *';
 const TIMEZONE = 'America/Chicago';
 
-const credentials = {
-  login: process.env.YTIMES_LOGIN ?? 'GLEB',
-  account: process.env.YTIMES_ACCOUNT ?? 'reserva_lip',
-  password: process.env.YTIMES_PASSWORD ?? 'wumxuq-rurWem-5zejtu'
-};
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`Environment variable ${name} must be set for the YTimes integration`);
+  }
+  return value;
+}
 
-const uploadEndpoint =
-  process.env.COFFEE_KPI_UPLOAD_URL ?? `${process.env.COFFEE_KPI_BASE_URL ?? 'http://localhost:3000'}/api/upload`;
+function getYTimesCredentials() {
+  return {
+    login: requireEnv('YTIMES_LOGIN'),
+    account: requireEnv('YTIMES_ACCOUNT'),
+    password: requireEnv('YTIMES_PASSWORD')
+  };
+}
+
+function resolveUploadEndpoint(): string {
+  const explicitUploadUrl = process.env.COFFEE_KPI_UPLOAD_URL;
+  if (explicitUploadUrl) {
+    return explicitUploadUrl;
+  }
+
+  const backendUrl = process.env.COFFEE_KPI_BACKEND_URL ?? process.env.COFFEE_KPI_BASE_URL;
+  if (!backendUrl) {
+    throw new Error('Set COFFEE_KPI_BACKEND_URL (or COFFEE_KPI_UPLOAD_URL) to enable the fetchShifts plugin');
+  }
+
+  try {
+    return new URL('/api/upload', backendUrl).toString();
+  } catch (error) {
+    throw new Error(`Invalid backend URL provided for fetchShifts plugin: ${backendUrl}`);
+  }
+}
+
+function ensurePluginConfiguration(): void {
+  getYTimesCredentials();
+  resolveUploadEndpoint();
+}
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -70,6 +100,8 @@ async function waitForDownload(downloadDir: string, trigger: () => Promise<void>
 
 async function fetchShiftsReport(): Promise<void> {
   const downloadDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ytimes-shifts-'));
+  const credentials = getYTimesCredentials();
+  const uploadEndpoint = resolveUploadEndpoint();
   const browser = await puppeteer.launch({
     headless: true,
     args: ['--no-sandbox', '--disable-setuid-sandbox']
@@ -187,12 +219,20 @@ export async function register(app: Express): Promise<void> {
 
   if (process.argv.includes('--run-once')) {
     try {
+      ensurePluginConfiguration();
       await fetchShiftsReport();
       console.info('[fetchShifts] Manual run completed');
     } catch (error) {
       console.error('[fetchShifts] Manual run failed:', error);
       throw error;
     }
+    return;
+  }
+
+  try {
+    ensurePluginConfiguration();
+  } catch (error) {
+    console.error('[fetchShifts] Scheduler not started:', error);
     return;
   }
 

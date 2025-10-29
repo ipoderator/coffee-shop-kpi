@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Switch, Route, Redirect } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
@@ -22,6 +22,7 @@ import IntegrationsPage from "@/pages/IntegrationsPage";
 import { motion } from 'framer-motion';
 import { Coffee, TrendingUp, BarChart3 } from 'lucide-react';
 import type { AnalyticsResponse, FileUploadResponse } from '@shared/schema';
+import type { CSSProperties } from 'react';
 
 function DashboardLayout() {
   const { toast } = useToast();
@@ -38,8 +39,11 @@ function DashboardLayout() {
     retry: false,
   });
 
-  // If there's an error loading analytics (e.g., 404 after server restart), clear the uploadId
-  if (isError && uploadId) {
+  useEffect(() => {
+    if (!isError || !uploadId) {
+      return;
+    }
+
     console.error('Failed to load analytics:', error);
     localStorage.removeItem('coffee-kpi-uploadId');
     setUploadId(null);
@@ -48,7 +52,7 @@ function DashboardLayout() {
       description: 'Пожалуйста, загрузите файл снова',
       variant: 'destructive',
     });
-  }
+  }, [isError, uploadId, error, toast]);
 
   const handleFileSelect = async (file: File) => {
     setIsUploading(true);
@@ -101,7 +105,7 @@ function DashboardLayout() {
   const style = {
     "--sidebar-width": "16rem",
     "--sidebar-width-icon": "3rem",
-  };
+  } as CSSProperties;
 
   // Show auth page if not authenticated
   if (authLoading) {
