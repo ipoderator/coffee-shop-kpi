@@ -1,28 +1,40 @@
-import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, real, integer, boolean } from "drizzle-orm/pg-core";
-import { createInsertSchema } from "drizzle-zod";
-import { z } from "zod";
+import { sql } from 'drizzle-orm';
+import {
+  pgTable,
+  text,
+  varchar,
+  timestamp,
+  real,
+  integer,
+  boolean,
+  jsonb,
+} from 'drizzle-orm/pg-core';
+import { createInsertSchema } from 'drizzle-zod';
+import { z } from 'zod';
 
 // Transaction/Sale record from uploaded file
-export const transactions = pgTable("transactions", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  date: timestamp("date").notNull(),
-  year: integer("year"),
-  month: integer("month"),
-  amount: real("amount").notNull(),
-  checksCount: integer("checks_count").default(1), // Количество чеков (по умолчанию 1)
-  cashPayment: real("cash_payment"),
-  terminalPayment: real("terminal_payment"),
-  qrPayment: real("qr_payment"),
-  sbpPayment: real("sbp_payment"),
-  refundChecksCount: integer("refund_checks_count"), // Количество возвратов
-  refundCashPayment: real("refund_cash_payment"), // Возврат наличными
-  refundTerminalPayment: real("refund_terminal_payment"), // Возврат безналичными
-  refundQrPayment: real("refund_qr_payment"), // Возврат QR
-  refundSbpPayment: real("refund_sbp_payment"), // Возврат СБП
-  category: text("category"),
-  employee: text("employee"),
-  uploadId: varchar("upload_id").notNull(),
+export const transactions = pgTable('transactions', {
+  id: varchar('id')
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  date: timestamp('date').notNull(),
+  year: integer('year'),
+  month: integer('month'),
+  amount: real('amount').notNull(),
+  costOfGoods: real('cost_of_goods'),
+  checksCount: integer('checks_count').default(1), // Количество чеков (по умолчанию 1)
+  cashPayment: real('cash_payment'),
+  terminalPayment: real('terminal_payment'),
+  qrPayment: real('qr_payment'),
+  sbpPayment: real('sbp_payment'),
+  refundChecksCount: integer('refund_checks_count'), // Количество возвратов
+  refundCashPayment: real('refund_cash_payment'), // Возврат наличными
+  refundTerminalPayment: real('refund_terminal_payment'), // Возврат безналичными
+  refundQrPayment: real('refund_qr_payment'), // Возврат QR
+  refundSbpPayment: real('refund_sbp_payment'), // Возврат СБП
+  category: text('category'),
+  employee: text('employee'),
+  uploadId: varchar('upload_id').notNull(),
 });
 
 export const insertTransactionSchema = createInsertSchema(transactions).omit({
@@ -32,24 +44,253 @@ export const insertTransactionSchema = createInsertSchema(transactions).omit({
 export type InsertTransaction = z.infer<typeof insertTransactionSchema>;
 export type Transaction = typeof transactions.$inferSelect;
 
+export const profitabilityRecords = pgTable('profitability_records', {
+  id: varchar('id')
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  datasetId: varchar('dataset_id').notNull(),
+  reportDate: timestamp('report_date').notNull(),
+  shiftNumber: varchar('shift_number'),
+  incomeChecks: integer('income_checks').default(0).notNull(),
+  cashIncome: real('cash_income').default(0).notNull(),
+  cashlessIncome: real('cashless_income').default(0).notNull(),
+  returnChecks: integer('return_checks').default(0).notNull(),
+  cashReturn: real('cash_return').default(0).notNull(),
+  cashlessReturn: real('cashless_return').default(0).notNull(),
+  correctionChecks: integer('correction_checks').default(0).notNull(),
+  correctionCash: real('correction_cash').default(0).notNull(),
+  correctionCashless: real('correction_cashless').default(0).notNull(),
+  cogsTotal: real('cogs_total'),
+  cogsDetails: jsonb('cogs_details').$type<ProfitabilityCogsItem[] | null>(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export type ProfitabilityRecord = typeof profitabilityRecords.$inferSelect;
+export interface ProfitabilityCogsItem {
+  sku: string;
+  amount: number;
+  name?: string | null;
+  category?: string | null;
+}
+
+export interface ProfitabilityDatasetInfo {
+  id: string;
+  name: string;
+  createdAt: string;
+  sourceFile?: string;
+  periodStart: string;
+  periodEnd: string;
+  rows: number;
+}
+
+export interface ProfitabilityKPIs {
+  grossRevenue: number;
+  netRevenue: number;
+  returns: number;
+  corrections: number;
+  averageCheck: number;
+  incomeChecks: number;
+  returnRate: number;
+  cashShare: number;
+  cashlessShare: number;
+  cogsTotal?: number;
+  grossProfit?: number;
+  margin?: number;
+}
+
+export interface ProfitabilityDailyPoint {
+  date: string;
+  grossRevenue: number;
+  netRevenue: number;
+  returns: number;
+  corrections: number;
+  cashIncome: number;
+  cashlessIncome: number;
+  cashReturn: number;
+  cashlessReturn: number;
+  incomeChecks: number;
+  returnChecks: number;
+  correctionChecks: number;
+  cogsTotal?: number;
+  grossProfit?: number;
+  margin?: number;
+}
+
+export type ProfitabilityTableRow = ProfitabilityDailyPoint;
+
+export interface ProfitabilityAnalyticsResponse {
+  dataset: ProfitabilityDatasetInfo;
+  period: {
+    from: string;
+    to: string;
+  };
+  kpi: ProfitabilityKPIs;
+  daily: ProfitabilityDailyPoint[];
+  table: ProfitabilityTableRow[];
+}
+
+export type ProfitabilityImportStatus = 'success' | 'partial' | 'failed';
+
+export interface ProfitabilityImportError {
+  rowNumber: number;
+  field?: string;
+  message: string;
+  value?: string | number | null;
+}
+
+export interface ProfitabilityImportLogEntry {
+  id: string;
+  status: ProfitabilityImportStatus;
+  datasetId?: string;
+  sourceFile?: string;
+  rowsProcessed: number;
+  periodStart?: string;
+  periodEnd?: string;
+  author?: string;
+  createdAt: string;
+  errors?: ProfitabilityImportError[];
+  warnings?: string[];
+}
+
+export const DEFAULT_PROFITABILITY_MAX_CHECKS_PER_DAY = 5000;
+
+export interface ProfitabilityUploadResponse {
+  success: true;
+  dataset: ProfitabilityDatasetInfo;
+  rowsProcessed: number;
+  log: ProfitabilityImportLogEntry;
+  errors?: ProfitabilityImportError[];
+  warnings?: string[];
+}
+
+export interface ProfitabilityImportResult {
+  batchId: string;
+  rowsOk: number;
+  rowsFailed: number;
+  periodFrom: string | null;
+  periodTo: string | null;
+  errors: ProfitabilityImportError[];
+  warnings?: string[];
+  datasetId?: string;
+}
+
+export interface ProfitabilitySummaryKPI {
+  revenueGross: number;
+  returns: number;
+  corrections: number;
+  revenueNet: number;
+  receiptsCount: number;
+  averageCheck: number;
+  returnChecks: number;
+  returnRate: number;
+  revenueGrowthRate: number | null;
+  movingAverage7: number | null;
+  movingAverage28: number | null;
+  grossProfit?: number | null;
+  grossMarginPct?: number | null;
+}
+
+export interface ProfitabilityKPIDelta {
+  revenueGross: number | null;
+  returns: number | null;
+  corrections: number | null;
+  revenueNet: number | null;
+  receiptsCount: number | null;
+  averageCheck: number | null;
+  returnChecks: number | null;
+  returnRate: number | null;
+  revenueGrowthRate: number | null;
+  grossProfit?: number | null;
+  grossMarginPct?: number | null;
+}
+
+export interface ProfitabilitySummaryResponse {
+  period: {
+    from: string;
+    to: string;
+  };
+  previousPeriod: {
+    from: string;
+    to: string;
+  };
+  current: ProfitabilitySummaryKPI;
+  previous: ProfitabilitySummaryKPI | null;
+  delta: ProfitabilityKPIDelta;
+  hasCogs: boolean;
+  warnings?: string[];
+}
+
+export interface ProfitabilitySeriesPoint {
+  date: string;
+  revenueGross: number;
+  returns: number;
+  corrections: number;
+  revenueNet: number;
+  receiptsCount: number;
+  averageCheck: number;
+  returnChecks: number;
+  returnRate: number;
+  cogsTotal: number | null;
+  grossProfit: number | null;
+  grossMarginPct: number | null;
+  movingAverage7: number | null;
+  movingAverage28: number | null;
+}
+
+export interface ProfitabilitySeriesResponse {
+  period: {
+    from: string;
+    to: string;
+  };
+  points: ProfitabilitySeriesPoint[];
+  hasCogs: boolean;
+}
+
+export interface ProfitabilityTableEntry {
+  date: string;
+  revenueGross: number;
+  returns: number;
+  corrections: number;
+  revenueNet: number;
+  receiptsCount: number;
+  returnChecks: number;
+  correctionsCount: number;
+  averageCheck: number;
+  refundRatio: number;
+  cogsTotal: number | null;
+  grossProfit: number | null;
+  grossMarginPct: number | null;
+}
+
+export interface ProfitabilityTableResponse {
+  period: {
+    from: string;
+    to: string;
+  };
+  rows: ProfitabilityTableEntry[];
+  hasCogs: boolean;
+}
+
 // Users table for authentication
-export const users = pgTable("users", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  email: varchar("email").notNull().unique(),
-  password: varchar("password").notNull(),
-  name: varchar("name").notNull(),
-  role: varchar("role").default("user"), // user, admin
-  isActive: boolean("is_active").default(true),
+export const users = pgTable('users', {
+  id: varchar('id')
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  email: varchar('email').notNull().unique(),
+  password: varchar('password').notNull(),
+  name: varchar('name').notNull(),
+  role: varchar('role').default('user'), // user, admin
+  isActive: boolean('is_active').default(true),
   // Security fields
-  twoFactorSecret: varchar("two_factor_secret"), // для 2FA
-  twoFactorEnabled: boolean("two_factor_enabled").default(false),
-  lastLoginAt: timestamp("last_login_at"),
-  lastLoginIp: varchar("last_login_ip"),
-  failedLoginAttempts: integer("failed_login_attempts").default(0),
-  lockedUntil: timestamp("locked_until"),
-  passwordChangedAt: timestamp("password_changed_at").defaultNow(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  twoFactorSecret: varchar('two_factor_secret'), // для 2FA
+  twoFactorEnabled: boolean('two_factor_enabled').default(false),
+  lastLoginAt: timestamp('last_login_at'),
+  lastLoginIp: varchar('last_login_ip'),
+  failedLoginAttempts: integer('failed_login_attempts').default(0),
+  lockedUntil: timestamp('locked_until'),
+  passwordChangedAt: timestamp('password_changed_at').defaultNow(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
 export const insertUserSchema = createInsertSchema(users).omit({
@@ -59,15 +300,17 @@ export const insertUserSchema = createInsertSchema(users).omit({
 });
 
 // Security logs table
-export const securityLogs = pgTable("security_logs", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").references(() => users.id),
-  action: varchar("action").notNull(), // login, logout, password_change, etc.
-  ip: varchar("ip").notNull(),
-  userAgent: text("user_agent"),
-  success: boolean("success").notNull(),
-  details: text("details"), // JSON string with additional details
-  createdAt: timestamp("created_at").defaultNow().notNull(),
+export const securityLogs = pgTable('security_logs', {
+  id: varchar('id')
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  userId: varchar('user_id').references(() => users.id),
+  action: varchar('action').notNull(), // login, logout, password_change, etc.
+  ip: varchar('ip').notNull(),
+  userAgent: text('user_agent'),
+  success: boolean('success').notNull(),
+  details: text('details'), // JSON string with additional details
+  createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
 export type SecurityLog = typeof securityLogs.$inferSelect;
@@ -77,13 +320,17 @@ export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 
 // User sessions table
-export const userSessions = pgTable("user_sessions", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  sessionToken: varchar("session_token").notNull().unique(),
-  expiresAt: timestamp("expires_at").notNull(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  lastUsedAt: timestamp("last_used_at").defaultNow().notNull(),
+export const userSessions = pgTable('user_sessions', {
+  id: varchar('id')
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  userId: varchar('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  sessionToken: varchar('session_token').notNull().unique(),
+  expiresAt: timestamp('expires_at').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  lastUsedAt: timestamp('last_used_at').defaultNow().notNull(),
 });
 
 export const insertUserSessionSchema = createInsertSchema(userSessions).omit({
@@ -94,7 +341,7 @@ export const insertUserSessionSchema = createInsertSchema(userSessions).omit({
 export type InsertUserSession = z.infer<typeof insertUserSessionSchema>;
 export type UserSession = typeof userSessions.$inferSelect;
 
-export type AuthUser = Pick<User, "id" | "email" | "name" | "role"> & {
+export type AuthUser = Pick<User, 'id' | 'email' | 'name' | 'role'> & {
   isActive?: boolean | null;
   createdAt?: Date | string | null;
   updatedAt?: Date | string | null;
@@ -178,6 +425,9 @@ export interface KPIMetrics {
   totalRevenue: number;
   averageCheck: number;
   totalChecks: number;
+  totalCostOfGoods?: number;
+  grossProfit?: number;
+  grossMargin?: number;
   previousRevenue?: number;
   previousAverageCheck?: number;
   previousChecks?: number;
@@ -188,6 +438,8 @@ export interface KPIMetrics {
   currentMonthTotalChecks?: number; // Общее количество чеков за текущий месяц
   currentMonthAvgChecksPerDay?: number; // Среднее количество чеков в день за текущий месяц
   revenueGrowthYoY?: number;
+  grossProfitGrowth?: number;
+  grossMarginChange?: number;
 }
 
 export interface ForecastData {
@@ -312,6 +564,9 @@ export interface PeriodData {
   revenue: number;
   checks: number;
   averageCheck: number;
+  costOfGoods?: number;
+  grossProfit?: number;
+  grossMargin?: number;
 }
 
 export interface DayOfWeekData {
@@ -326,6 +581,9 @@ export interface MonthPeriodMetrics {
   revenue: number;
   checks: number;
   averageCheck: number;
+  costOfGoods?: number;
+  grossProfit?: number;
+  grossMargin?: number;
   dailyData: PeriodData[];
   paymentBreakdown: {
     cash: number;
@@ -340,6 +598,9 @@ export interface DayMetrics {
   revenue: number;
   checks: number;
   averageCheck: number;
+  costOfGoods?: number;
+  grossProfit?: number;
+  grossMargin?: number;
   paymentBreakdown: {
     cash: number;
     terminal: number;
@@ -355,6 +616,8 @@ export interface DayComparisonData {
     revenueGrowth: number;
     checksGrowth: number;
     averageCheckGrowth: number;
+    grossProfitGrowth?: number;
+    grossMarginChange?: number;
   } | null;
 }
 
@@ -371,8 +634,18 @@ export interface MonthlyComparisonData {
     revenueGrowth: number;
     checksGrowth: number;
     averageCheckGrowth: number;
+    grossProfitGrowth?: number;
+    grossMarginChange?: number;
   };
   dayComparison?: DayComparisonData;
+}
+
+export type AnalyticsDateFilterPreset = 'last7' | 'last28' | 'last90' | 'mtd' | 'ytd' | 'custom';
+
+export interface AnalyticsPeriod {
+  from: string;
+  to: string;
+  preset?: AnalyticsDateFilterPreset;
 }
 
 export interface AnalyticsResponse {
@@ -392,6 +665,8 @@ export interface AnalyticsResponse {
     trendAnalysis: TrendAnalysis;
     marketSegments: MarketSegment[];
   };
+  hasCostData?: boolean;
+  period?: AnalyticsPeriod;
 }
 
 export interface FileUploadResponse {
@@ -412,14 +687,100 @@ export const COLUMN_MAPPINGS = {
   year: ['year', 'год'],
   month: ['month', 'месяц'],
   amount: ['amount', 'сумма', 'total', 'итого', 'price', 'цена', 'revenue', 'выручка'],
-  checksCount: ['чеков прихода', 'checks count', 'receipt count', 'receipts', 'количество чеков', 'кол-во чеков'],
-  cashPayment: ['приход наличными', 'cash payment'],
-  terminalPayment: ['приход безналичными', 'card payment', 'по терминалу'],
-  qrPayment: ['qr', 'qr-код', 'qr код', 'по qr', 'по qr-коду'],
-  sbpPayment: ['sbp', 'сбп', 'система быстрых платежей'],
-  refundChecksCount: ['чеков возврата прихода', 'чеков возврата', 'возврата прихода', 'refund checks', 'refund count'],
+  costOfGoods: [
+    'cost',
+    'costs',
+    'cost of goods',
+    'cogs',
+    'себестоимость',
+    'себестоимость продаж',
+    'себестоимость товара',
+    'с/с',
+    'cost_of_goods',
+  ],
+  checksCount: [
+    'чеков прихода',
+    'checks count',
+    'receipt count',
+    'receipts',
+    'количество чеков',
+    'кол-во чеков',
+  ],
+  cashPayment: [
+    'приход наличными',
+    'cash payment',
+    'оплата наличными',
+    'наличные',
+    'наличные, руб',
+    'наличные руб',
+    'наличные (руб)',
+    'наличными',
+    'наличный расчет',
+    'наличный расчёт',
+    'наличные платежи',
+    'cash',
+  ],
+  terminalPayment: [
+    'приход безналичными',
+    'card payment',
+    'по терминалу',
+    'терминал',
+    'терминал, руб',
+    'терминал руб',
+    'терминальные платежи',
+    'безнал',
+    'безналичные',
+    'безналичный расчет',
+    'безналичный расчёт',
+    'оплата по карте',
+    'оплата картой',
+    'карта',
+    'картой',
+    'bank card',
+    'card',
+    'эквайринг',
+    'pos-терминал',
+    'pos терминал',
+  ],
+  qrPayment: [
+    'qr',
+    'qr-код',
+    'qr код',
+    'по qr',
+    'по qr-коду',
+    'оплата по qr',
+    'оплата по qr-коду',
+    'qr оплата',
+    'qr-платежи',
+    'qr/сбп',
+    'qr-сбп',
+  ],
+  sbpPayment: [
+    'sbp',
+    'сбп',
+    'система быстрых платежей',
+    'оплата по сбп',
+    'по сбп',
+    'быстрые платежи',
+    'fast payment',
+    'fast payments',
+    'sbp payment',
+    'сбп/qr',
+  ],
+  refundChecksCount: [
+    'чеков возврата прихода',
+    'чеков возврата',
+    'возврата прихода',
+    'refund checks',
+    'refund count',
+  ],
   refundCashPayment: ['возврат наличными', 'возврат наличных', 'refund cash'],
-  refundTerminalPayment: ['возврат безналичными', 'возврат безналичных', 'refund terminal', 'refund card'],
+  refundTerminalPayment: [
+    'возврат безналичными',
+    'возврат безналичных',
+    'refund terminal',
+    'refund card',
+  ],
   refundQrPayment: ['возврат qr', 'refund qr'],
   refundSbpPayment: ['возврат сбп', 'refund sbp'],
   category: ['category', 'категория', 'тип', 'type', 'product', 'товар'],
@@ -510,37 +871,45 @@ export interface MarketSegment {
 }
 
 // Password validation function
-const passwordValidation = z.string()
-  .min(8, "Пароль должен содержать минимум 8 символов")
-  .regex(/[a-z]/, "Пароль должен содержать минимум одну строчную букву")
-  .regex(/[A-Z]/, "Пароль должен содержать минимум одну заглавную букву")
-  .regex(/[0-9]/, "Пароль должен содержать минимум одну цифру")
-  .regex(/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/, "Пароль должен содержать минимум один специальный символ");
+const passwordValidation = z
+  .string()
+  .min(8, 'Пароль должен содержать минимум 8 символов')
+  .regex(/[a-z]/, 'Пароль должен содержать минимум одну строчную букву')
+  .regex(/[A-Z]/, 'Пароль должен содержать минимум одну заглавную букву')
+  .regex(/[0-9]/, 'Пароль должен содержать минимум одну цифру')
+  .regex(
+    /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/,
+    'Пароль должен содержать минимум один специальный символ',
+  );
 
 // Authentication schemas
 export const loginSchema = z.object({
-  email: z.string().email("Некорректный email адрес"),
-  password: z.string().min(1, "Введите пароль"),
+  email: z.string().email('Некорректный email адрес'),
+  password: z.string().min(1, 'Введите пароль'),
 });
 
-export const registerSchema = z.object({
-  email: z.string().email("Некорректный email адрес"),
-  password: passwordValidation,
-  confirmPassword: z.string().min(8, "Подтвердите пароль"),
-  name: z.string().min(2, "Имя должно содержать минимум 2 символа"),
-}).refine((data) => data.password === data.confirmPassword, {
-  message: "Пароли не совпадают",
-  path: ["confirmPassword"],
-});
+export const registerSchema = z
+  .object({
+    email: z.string().email('Некорректный email адрес'),
+    password: passwordValidation,
+    confirmPassword: z.string().min(8, 'Подтвердите пароль'),
+    name: z.string().min(2, 'Имя должно содержать минимум 2 символа'),
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    message: 'Пароли не совпадают',
+    path: ['confirmPassword'],
+  });
 
-export const changePasswordSchema = z.object({
-  currentPassword: z.string().min(1, "Введите текущий пароль"),
-  newPassword: passwordValidation,
-  confirmPassword: z.string().min(8, "Подтвердите новый пароль"),
-}).refine((data) => data.newPassword === data.confirmPassword, {
-  message: "Пароли не совпадают",
-  path: ["confirmPassword"],
-});
+export const changePasswordSchema = z
+  .object({
+    currentPassword: z.string().min(1, 'Введите текущий пароль'),
+    newPassword: passwordValidation,
+    confirmPassword: z.string().min(8, 'Подтвердите новый пароль'),
+  })
+  .refine((data) => data.newPassword === data.confirmPassword, {
+    message: 'Пароли не совпадают',
+    path: ['confirmPassword'],
+  });
 
 export type LoginData = z.infer<typeof loginSchema>;
 export type RegisterData = z.infer<typeof registerSchema>;
@@ -563,3 +932,60 @@ export interface SessionResponse {
   sessionToken: string;
   expiresAt: string;
 }
+
+// Z-Reports (sales_z_reports) — ежедневные Z-отчёты
+export const salesZReports = pgTable('sales_z_reports', {
+  id: varchar('id')
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  reportDatetime: timestamp('report_datetime').notNull(), // исходное Дата/время
+  reportDate: text('report_date').notNull(), // нормализованная дата (без времени)
+  reportNumber: text('report_number').notNull(), // Номер отчёта
+  receiptsCount: integer('receipts_count').notNull(), // Чеков прихода
+  revenueCash: real('revenue_cash').notNull(), // Приход наличными
+  revenueCashless: real('revenue_cashless').notNull(), // Приход безналичными
+  refundReceiptsCount: integer('refund_receipts_count').notNull(), // Чеков возврата прихода
+  refundCash: real('refund_cash').notNull(), // Возврат наличными
+  refundCashless: real('refund_cashless').notNull(), // Возврат безналичными
+  corrReceiptsCount: integer('corr_receipts_count').notNull(), // Чеков коррекции прихода
+  corrCash: real('corr_cash').notNull(), // Коррекции прихода наличными
+  corrCashless: real('corr_cashless').notNull(), // Коррекции прихода безналичными
+  importBatchId: varchar('import_batch_id').notNull(), // связывает с импортом
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export type SalesZReport = typeof salesZReports.$inferSelect;
+
+// COGS Daily (cogs_daily)
+export const cogsDaily = pgTable('cogs_daily', {
+  id: varchar('id')
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  reportDate: text('report_date').notNull().unique(),
+  cogsTotal: real('cogs_total').notNull(),
+  importBatchId: varchar('import_batch_id').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export type CogsDaily = typeof cogsDaily.$inferSelect;
+
+// Import Batches (import_batches)
+export const importBatches = pgTable('import_batches', {
+  id: varchar('id')
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  filename: text('filename').notNull(),
+  sourceType: varchar('source_type').notNull(), // z_report | cogs_daily
+  rowsTotal: integer('rows_total').notNull(),
+  rowsOk: integer('rows_ok').notNull(),
+  rowsFailed: integer('rows_failed').notNull(),
+  periodFrom: text('period_from').notNull(),
+  periodTo: text('period_to').notNull(),
+  errorsJson: text('errors_json'), // JSON с ошибками
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export type ImportBatch = typeof importBatches.$inferSelect;

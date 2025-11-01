@@ -18,9 +18,7 @@ export function CustomerClustersCard({ clusters }: CustomerClustersCardProps) {
             <Users className="h-5 w-5" />
             Сегменты клиентов
           </CardTitle>
-          <CardDescription>
-            Анализ клиентских сегментов на основе поведения
-          </CardDescription>
+          <CardDescription>Анализ клиентских сегментов на основе поведения</CardDescription>
         </CardHeader>
         <CardContent>
           <p className="text-muted-foreground text-center py-4">
@@ -32,8 +30,9 @@ export function CustomerClustersCard({ clusters }: CustomerClustersCardProps) {
   }
 
   const totalCustomers = clusters.reduce((sum, cluster) => sum + cluster.size, 0);
-  const totalRevenue = clusters.reduce((sum, cluster) => 
-    sum + (cluster.avgCheck * cluster.frequency * cluster.size), 0
+  const totalRevenue = clusters.reduce(
+    (sum, cluster) => sum + cluster.avgCheck * cluster.frequency * cluster.size,
+    0,
   );
 
   return (
@@ -104,27 +103,21 @@ export function CustomerClustersCard({ clusters }: CustomerClustersCardProps) {
                       <DollarSign className="h-3 w-3" />
                       <span>Средний чек</span>
                     </div>
-                    <div className="font-semibold">
-                      {Math.round(cluster.avgCheck)} ₽
-                    </div>
+                    <div className="font-semibold">{Math.round(cluster.avgCheck)} ₽</div>
                   </div>
                   <div className="text-center">
                     <div className="flex items-center justify-center gap-1 text-muted-foreground">
                       <Calendar className="h-3 w-3" />
                       <span>Частота</span>
                     </div>
-                    <div className="font-semibold">
-                      {cluster.frequency.toFixed(1)}
-                    </div>
+                    <div className="font-semibold">{cluster.frequency.toFixed(1)}</div>
                   </div>
                   <div className="text-center">
                     <div className="flex items-center justify-center gap-1 text-muted-foreground">
                       <TrendingUp className="h-3 w-3" />
                       <span>Выручка</span>
                     </div>
-                    <div className="font-semibold">
-                      {Math.round(revenue).toLocaleString()} ₽
-                    </div>
+                    <div className="font-semibold">{Math.round(revenue).toLocaleString()} ₽</div>
                   </div>
                 </div>
 
@@ -149,7 +142,7 @@ export function CustomerClustersCard({ clusters }: CustomerClustersCardProps) {
                 </div>
 
                 {/* Предпочтения */}
-                {(cluster.characteristics.preferredDays.length > 0 || 
+                {(cluster.characteristics.preferredDays.length > 0 ||
                   cluster.characteristics.preferredMonths.length > 0) && (
                   <div className="space-y-2">
                     {cluster.characteristics.preferredDays.length > 0 && (
@@ -158,7 +151,7 @@ export function CustomerClustersCard({ clusters }: CustomerClustersCardProps) {
                           Предпочитаемые дни:
                         </div>
                         <div className="flex gap-1">
-                          {cluster.characteristics.preferredDays.map(day => (
+                          {cluster.characteristics.preferredDays.map((day) => (
                             <Badge key={day} variant="outline" className="text-xs">
                               {['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'][day]}
                             </Badge>
@@ -172,10 +165,24 @@ export function CustomerClustersCard({ clusters }: CustomerClustersCardProps) {
                           Предпочитаемые месяцы:
                         </div>
                         <div className="flex gap-1">
-                          {cluster.characteristics.preferredMonths.map(month => (
+                          {cluster.characteristics.preferredMonths.map((month) => (
                             <Badge key={month} variant="outline" className="text-xs">
-                              {['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 
-                                'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'][month]}
+                              {
+                                [
+                                  'Янв',
+                                  'Фев',
+                                  'Мар',
+                                  'Апр',
+                                  'Май',
+                                  'Июн',
+                                  'Июл',
+                                  'Авг',
+                                  'Сен',
+                                  'Окт',
+                                  'Ноя',
+                                  'Дек',
+                                ][month]
+                              }
                             </Badge>
                           ))}
                         </div>
@@ -191,13 +198,16 @@ export function CustomerClustersCard({ clusters }: CustomerClustersCardProps) {
                   </div>
                   <div className="flex gap-1">
                     {cluster.seasonality.map((value, day) => {
-                      const intensity = Math.min(100, (value / Math.max(...cluster.seasonality)) * 100);
+                      const intensity = Math.min(
+                        100,
+                        (value / Math.max(...cluster.seasonality)) * 100,
+                      );
                       return (
                         <div key={day} className="flex flex-col items-center gap-1">
                           <div className="text-xs text-muted-foreground">
                             {['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'][day]}
                           </div>
-                          <div 
+                          <div
                             className="w-4 bg-primary/20 rounded-sm"
                             style={{ height: `${Math.max(4, intensity)}px` }}
                           />

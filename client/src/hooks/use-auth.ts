@@ -1,7 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useToast } from './use-toast';
-import type { AuthResponse, LoginData, RegisterData, ChangePasswordData, AuthUser } from '@shared/schema';
+import type {
+  AuthResponse,
+  LoginData,
+  RegisterData,
+  ChangePasswordData,
+  AuthUser,
+} from '@shared/schema';
 
 interface AuthState {
   user: AuthUser | null;
@@ -113,7 +119,11 @@ export function useAuth(): AuthContextType {
   });
 
   // Query to get current user
-  const { data: userData, isLoading: isUserLoading, error } = useQuery({
+  const {
+    data: userData,
+    isLoading: isUserLoading,
+    error,
+  } = useQuery({
     queryKey: ['auth', 'me'],
     queryFn: authAPI.getMe,
     retry: false,
@@ -137,7 +147,7 @@ export function useAuth(): AuthContextType {
     },
     onError: (err) => {
       const message = err instanceof Error ? err.message : 'Произошла ошибка входа';
-      setAuthState(prev => ({ ...prev, isLoading: false }));
+      setAuthState((prev) => ({ ...prev, isLoading: false }));
       toast({
         title: 'Ошибка входа',
         description: message,
@@ -163,7 +173,7 @@ export function useAuth(): AuthContextType {
     },
     onError: (err) => {
       const message = err instanceof Error ? err.message : 'Произошла ошибка регистрации';
-      setAuthState(prev => ({ ...prev, isLoading: false }));
+      setAuthState((prev) => ({ ...prev, isLoading: false }));
       toast({
         title: 'Ошибка регистрации',
         description: message,
@@ -244,21 +254,30 @@ export function useAuth(): AuthContextType {
     }
   }, [userData, error, isUserLoading]);
 
-  const login = useCallback(async (data: LoginData) => {
-    await loginMutation.mutateAsync(data);
-  }, [loginMutation]);
+  const login = useCallback(
+    async (data: LoginData) => {
+      await loginMutation.mutateAsync(data);
+    },
+    [loginMutation],
+  );
 
-  const register = useCallback(async (data: RegisterData) => {
-    await registerMutation.mutateAsync(data);
-  }, [registerMutation]);
+  const register = useCallback(
+    async (data: RegisterData) => {
+      await registerMutation.mutateAsync(data);
+    },
+    [registerMutation],
+  );
 
   const logout = useCallback(async () => {
     await logoutMutation.mutateAsync();
   }, [logoutMutation]);
 
-  const changePassword = useCallback(async (data: ChangePasswordData) => {
-    await changePasswordMutation.mutateAsync(data);
-  }, [changePasswordMutation]);
+  const changePassword = useCallback(
+    async (data: ChangePasswordData) => {
+      await changePasswordMutation.mutateAsync(data);
+    },
+    [changePasswordMutation],
+  );
 
   return {
     ...authState,

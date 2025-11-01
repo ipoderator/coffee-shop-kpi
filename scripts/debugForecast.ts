@@ -79,7 +79,9 @@ function parseArgs(argv: string[]): CliArgs {
   return args;
 }
 
-function buildTransactions(rows: Awaited<ReturnType<typeof parseExcelFile>>['rows']): Transaction[] {
+function buildTransactions(
+  rows: Awaited<ReturnType<typeof parseExcelFile>>['rows'],
+): Transaction[] {
   const transactions: Transaction[] = [];
 
   rows.forEach((row, index) => {
@@ -99,6 +101,7 @@ function buildTransactions(rows: Awaited<ReturnType<typeof parseExcelFile>>['row
       year: row.year ?? date.getFullYear(),
       month: row.month ?? date.getMonth() + 1,
       amount,
+      costOfGoods: row.costOfGoods ?? null,
       checksCount: row.checksCount ?? 1,
       cashPayment: row.cashPayment ?? 0,
       terminalPayment: row.terminalPayment ?? 0,
@@ -160,14 +163,17 @@ async function main(): Promise<void> {
     const forecast = analytics.forecast;
 
     if (!forecast) {
-      console.log('Not enough data to build an ML forecast. Ensemble debug logs were not produced.');
+      console.log(
+        'Not enough data to build an ML forecast. Ensemble debug logs were not produced.',
+      );
       return;
     }
 
-    const dailyForecast = forecast.nextMonth?.dailyForecast ?? forecast.extendedForecast?.dailyForecast ?? [];
+    const dailyForecast =
+      forecast.nextMonth?.dailyForecast ?? forecast.extendedForecast?.dailyForecast ?? [];
     if (dailyForecast.length > 0) {
       console.log('Daily forecast preview (date -> revenue @ confidence):');
-      dailyForecast.forEach(day => {
+      dailyForecast.forEach((day) => {
         const revenueLabel = Number.isFinite(day.predictedRevenue)
           ? day.predictedRevenue.toFixed(2)
           : 'NaN';

@@ -30,7 +30,10 @@ export function getTrainingFileFieldName(): string {
 function sanitizeFileName(originalName: string): string {
   const extension = path.extname(originalName).toLowerCase();
   const base = path.basename(originalName, extension).toLowerCase();
-  const safeBase = base.replace(/[^a-z0-9-_]+/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '');
+  const safeBase = base
+    .replace(/[^a-z0-9-_]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
   const truncated = safeBase.slice(0, 80) || 'dataset';
   return `${truncated}${extension}`;
 }
@@ -41,12 +44,14 @@ function validateTrainingDataset(rows: ParsedRow[]): string | null {
   }
 
   const dateStrings = rows
-    .map(row => {
+    .map((row) => {
       const rawDate = row.date instanceof Date ? row.date : new Date(row.date);
       if (!rawDate || Number.isNaN(rawDate.getTime())) {
         return null;
       }
-      const utcDate = new Date(Date.UTC(rawDate.getFullYear(), rawDate.getMonth(), rawDate.getDate()));
+      const utcDate = new Date(
+        Date.UTC(rawDate.getFullYear(), rawDate.getMonth(), rawDate.getDate()),
+      );
       return utcDate.toISOString().slice(0, 10);
     })
     .filter(Boolean) as string[];
@@ -58,7 +63,7 @@ function validateTrainingDataset(rows: ParsedRow[]): string | null {
   }
 
   const sortedDates = Array.from(uniqueDates)
-    .map(dateStr => new Date(dateStr))
+    .map((dateStr) => new Date(dateStr))
     .sort((a, b) => a.getTime() - b.getTime());
 
   if (sortedDates.length === 0) {
@@ -67,7 +72,8 @@ function validateTrainingDataset(rows: ParsedRow[]): string | null {
 
   const coverageDays =
     Math.floor(
-      (sortedDates[sortedDates.length - 1].getTime() - sortedDates[0].getTime()) / (1000 * 60 * 60 * 24),
+      (sortedDates[sortedDates.length - 1].getTime() - sortedDates[0].getTime()) /
+        (1000 * 60 * 60 * 24),
     ) + 1;
 
   if (coverageDays < MIN_DAILY_RECORDS) {
@@ -90,21 +96,21 @@ async function runTraining(filePath: string): Promise<{ stdout: string; stderr: 
     let stdout = '';
     let stderr = '';
 
-    child.stdout?.on('data', chunk => {
+    child.stdout?.on('data', (chunk) => {
       const text = chunk.toString();
       stdout += text;
     });
 
-    child.stderr?.on('data', chunk => {
+    child.stderr?.on('data', (chunk) => {
       const text = chunk.toString();
       stderr += text;
     });
 
-    child.on('error', error => {
+    child.on('error', (error) => {
       reject(error);
     });
 
-    child.on('close', code => {
+    child.on('close', (code) => {
       if (code === 0) {
         resolve({ stdout, stderr });
       } else {
@@ -163,7 +169,9 @@ export async function trainSalesModelFromExcel(
     }
 
     console.error('Training script error:', trainingError);
-    throw new TrainingError('Ошибка при обучении модели. Проверьте корректность данных и повторите попытку.');
+    throw new TrainingError(
+      'Ошибка при обучении модели. Проверьте корректность данных и повторите попытку.',
+    );
   }
 
   if (trainingLogs.stdout.trim().length > 0) {
@@ -188,4 +196,3 @@ export async function trainSalesModelFromExcel(
     filePath,
   };
 }
-

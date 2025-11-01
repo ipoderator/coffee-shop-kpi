@@ -1,7 +1,7 @@
 import type { InsertSecurityLog } from '@shared/schema';
 import { storage } from '../storage';
 
-export type SecurityAction = 
+export type SecurityAction =
   | 'login_attempt'
   | 'login_success'
   | 'login_failed'
@@ -54,7 +54,7 @@ export async function logLoginAttempt(
   userAgent: string,
   success: boolean,
   userId?: string,
-  details?: Record<string, any>
+  details?: Record<string, any>,
 ): Promise<void> {
   await logSecurityEvent({
     userId,
@@ -72,11 +72,7 @@ export async function logLoginAttempt(
 /**
  * Логирует выход из системы
  */
-export async function logLogout(
-  userId: string,
-  ip: string,
-  userAgent: string
-): Promise<void> {
+export async function logLogout(userId: string, ip: string, userAgent: string): Promise<void> {
   await logSecurityEvent({
     userId,
     action: 'logout',
@@ -94,7 +90,7 @@ export async function logPasswordChange(
   ip: string,
   userAgent: string,
   success: boolean,
-  details?: Record<string, any>
+  details?: Record<string, any>,
 ): Promise<void> {
   await logSecurityEvent({
     userId,
@@ -113,7 +109,7 @@ export async function logAccountLocked(
   userId: string,
   ip: string,
   userAgent: string,
-  reason: string
+  reason: string,
 ): Promise<void> {
   await logSecurityEvent({
     userId,
@@ -131,7 +127,7 @@ export async function logAccountLocked(
 export async function logSuspiciousActivity(
   ip: string,
   userAgent: string,
-  details: Record<string, any>
+  details: Record<string, any>,
 ): Promise<void> {
   await logSecurityEvent({
     action: 'suspicious_activity',
@@ -149,7 +145,7 @@ export async function logRateLimitExceeded(
   ip: string,
   userAgent: string,
   endpoint: string,
-  limit: number
+  limit: number,
 ): Promise<void> {
   await logSecurityEvent({
     action: 'rate_limit_exceeded',
@@ -169,7 +165,7 @@ export async function logRateLimitExceeded(
 export async function getSecurityLogs(
   userId: string,
   limit: number = 50,
-  offset: number = 0
+  offset: number = 0,
 ): Promise<any[]> {
   try {
     return await storage.getSecurityLogsByUserId(userId, limit, offset);
@@ -190,12 +186,12 @@ export async function getSecurityStats(userId: string): Promise<{
 }> {
   try {
     const logs = await storage.getSecurityLogsByUserId(userId, 1000, 0);
-    
-    const totalLogins = logs.filter(log => log.action === 'login_success').length;
-    const failedLogins = logs.filter(log => log.action === 'login_failed').length;
-    const lastLoginLog = logs.find(log => log.action === 'login_success');
-    const suspiciousActivity = logs.filter(log => log.action === 'suspicious_activity').length;
-    
+
+    const totalLogins = logs.filter((log) => log.action === 'login_success').length;
+    const failedLogins = logs.filter((log) => log.action === 'login_failed').length;
+    const lastLoginLog = logs.find((log) => log.action === 'login_success');
+    const suspiciousActivity = logs.filter((log) => log.action === 'suspicious_activity').length;
+
     return {
       totalLogins,
       failedLogins,

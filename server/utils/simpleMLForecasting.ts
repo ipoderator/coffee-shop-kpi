@@ -7,7 +7,7 @@ function calculateHistoricalClamp(
   values: number[],
   fallback: number,
 ): { mean: number; std: number; clampLimit: number } {
-  const sanitized = values.filter(value => Number.isFinite(value) && value > 0);
+  const sanitized = values.filter((value) => Number.isFinite(value) && value > 0);
   const fallbackMean = Number.isFinite(fallback) && fallback > 0 ? fallback : 1;
   const mean =
     sanitized.length > 0
@@ -88,9 +88,9 @@ export class SimpleMLForecastingEngine {
 
   // Анализ сегментов клиентов (упрощенная версия на основе доступных данных)
   private analyzeCustomerSegments(): CustomerSegment[] {
-    const customerData = new Map<string, { amounts: number[], dates: string[] }>();
-    
-    this.transactions.forEach(tx => {
+    const customerData = new Map<string, { amounts: number[]; dates: string[] }>();
+
+    this.transactions.forEach((tx) => {
       // Используем employee как идентификатор сегмента (если доступен)
       const customerId = tx.employee || 'general';
       if (!customerData.has(customerId)) {
@@ -102,8 +102,8 @@ export class SimpleMLForecastingEngine {
     });
 
     const segments: CustomerSegment[] = [];
-    const amounts = Array.from(customerData.values()).map(data => 
-      data.amounts.reduce((sum, amount) => sum + amount, 0) / data.amounts.length
+    const amounts = Array.from(customerData.values()).map(
+      (data) => data.amounts.reduce((sum, amount) => sum + amount, 0) / data.amounts.length,
     );
 
     if (amounts.length >= 2) {
@@ -111,11 +111,12 @@ export class SimpleMLForecastingEngine {
       const sortedAmounts = [...amounts].sort((a, b) => a - b);
       const q1 = sortedAmounts[Math.floor(sortedAmounts.length * 0.25)];
       const q3 = sortedAmounts[Math.floor(sortedAmounts.length * 0.75)];
-      
+
       customerData.forEach((data, customerId) => {
-        const avgCheck = data.amounts.reduce((sum, amount) => sum + amount, 0) / data.amounts.length;
+        const avgCheck =
+          data.amounts.reduce((sum, amount) => sum + amount, 0) / data.amounts.length;
         const frequency = data.dates.length;
-        
+
         let segmentName = 'Новые клиенты';
         if (avgCheck > q3 && frequency > 5) segmentName = 'VIP клиенты';
         else if (avgCheck > q1 && frequency > 3) segmentName = 'Постоянные клиенты';
@@ -128,7 +129,7 @@ export class SimpleMLForecastingEngine {
           name: segmentName,
           avgCheck,
           frequency,
-          seasonality
+          seasonality,
         });
       });
     }
@@ -138,9 +139,9 @@ export class SimpleMLForecastingEngine {
 
   // Анализ сегментов товаров (упрощенная версия на основе категорий)
   private analyzeProductSegments(): ProductSegment[] {
-    const productData = new Map<string, { amounts: number[], dates: string[] }>();
-    
-    this.transactions.forEach(tx => {
+    const productData = new Map<string, { amounts: number[]; dates: string[] }>();
+
+    this.transactions.forEach((tx) => {
       // Используем category как идентификатор сегмента товаров
       const productId = tx.category || 'general';
       if (!productData.has(productId)) {
@@ -152,18 +153,19 @@ export class SimpleMLForecastingEngine {
     });
 
     const segments: ProductSegment[] = [];
-    const amounts = Array.from(productData.values()).map(data => 
-      data.amounts.reduce((sum, amount) => sum + amount, 0) / data.amounts.length
+    const amounts = Array.from(productData.values()).map(
+      (data) => data.amounts.reduce((sum, amount) => sum + amount, 0) / data.amounts.length,
     );
 
     if (amounts.length >= 1) {
       const sortedAmounts = [...amounts].sort((a, b) => a - b);
       const q1 = sortedAmounts[Math.floor(sortedAmounts.length * 0.33)];
       const q2 = sortedAmounts[Math.floor(sortedAmounts.length * 0.67)];
-      
+
       productData.forEach((data, productId) => {
-        const avgPrice = data.amounts.reduce((sum, amount) => sum + amount, 0) / data.amounts.length;
-        
+        const avgPrice =
+          data.amounts.reduce((sum, amount) => sum + amount, 0) / data.amounts.length;
+
         let segmentName = 'Базовые товары';
         if (avgPrice > q2) segmentName = 'Премиум товары';
         else if (avgPrice > q1) segmentName = 'Средние товары';
@@ -176,7 +178,7 @@ export class SimpleMLForecastingEngine {
           name: segmentName,
           avgPrice,
           demandPattern,
-          seasonality
+          seasonality,
         });
       });
     }
@@ -195,8 +197,8 @@ export class SimpleMLForecastingEngine {
       dayOfWeekCount[dayOfWeek]++;
     });
 
-    return dayOfWeekRevenue.map((revenue, index) => 
-      dayOfWeekCount[index] > 0 ? revenue / dayOfWeekCount[index] : 0
+    return dayOfWeekRevenue.map((revenue, index) =>
+      dayOfWeekCount[index] > 0 ? revenue / dayOfWeekCount[index] : 0,
     );
   }
 
@@ -211,8 +213,8 @@ export class SimpleMLForecastingEngine {
       hourlyCount[hour]++;
     });
 
-    return hourlyDemand.map((demand, index) => 
-      hourlyCount[index] > 0 ? demand / hourlyCount[index] : 0
+    return hourlyDemand.map((demand, index) =>
+      hourlyCount[index] > 0 ? demand / hourlyCount[index] : 0,
     );
   }
 
@@ -227,16 +229,16 @@ export class SimpleMLForecastingEngine {
       monthlyCount[month]++;
     });
 
-    return monthlyRevenue.map((revenue, index) => 
-      monthlyCount[index] > 0 ? revenue / monthlyCount[index] : 0
+    return monthlyRevenue.map((revenue, index) =>
+      monthlyCount[index] > 0 ? revenue / monthlyCount[index] : 0,
     );
   }
 
   // Подготовка данных для временных рядов
   private prepareTimeSeriesData(): TimeSeriesData[] {
-    const dailyData = new Map<string, { revenue: number, count: number }>();
-    
-    this.transactions.forEach(tx => {
+    const dailyData = new Map<string, { revenue: number; count: number }>();
+
+    this.transactions.forEach((tx) => {
       const date = format(new Date(tx.date), 'yyyy-MM-dd');
       if (!dailyData.has(date)) {
         dailyData.set(date, { revenue: 0, count: 0 });
@@ -246,62 +248,64 @@ export class SimpleMLForecastingEngine {
       data.count++;
     });
 
-    return Array.from(dailyData.entries()).map(([date, data]) => {
-      const dateObj = new Date(date);
-      return {
-        date,
-        revenue: data.revenue,
-        dayOfWeek: getDay(dateObj),
-        dayOfMonth: dateObj.getDate(),
-        month: dateObj.getMonth(),
-        isWeekend: getDay(dateObj) === 0 || getDay(dateObj) === 6,
-        weatherTemp: 20,
-        weatherPrecip: 0,
-        isHoliday: false,
-        holidayType: 'none'
-      };
-    }).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    return Array.from(dailyData.entries())
+      .map(([date, data]) => {
+        const dateObj = new Date(date);
+        return {
+          date,
+          revenue: data.revenue,
+          dayOfWeek: getDay(dateObj),
+          dayOfMonth: dateObj.getDate(),
+          month: dateObj.getMonth(),
+          isWeekend: getDay(dateObj) === 0 || getDay(dateObj) === 6,
+          weatherTemp: 20,
+          weatherPrecip: 0,
+          isHoliday: false,
+          holidayType: 'none',
+        };
+      })
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   }
 
   // Простая ARIMA модель
-  private fitARIMAModel(data: TimeSeriesData[]): { slope: number, intercept: number } {
+  private fitARIMAModel(data: TimeSeriesData[]): { slope: number; intercept: number } {
     if (data.length < 7) return { slope: 0, intercept: 0 };
 
-    const revenues = data.map(d => d.revenue);
+    const revenues = data.map((d) => d.revenue);
     const n = revenues.length;
     const x = Array.from({ length: n }, (_, i) => i);
-    
+
     const sumX = x.reduce((sum, val) => sum + val, 0);
     const sumY = revenues.reduce((sum, val) => sum + val, 0);
     const sumXY = x.reduce((sum, val, i) => sum + val * revenues[i], 0);
     const sumXX = x.reduce((sum, val) => sum + val * val, 0);
-    
+
     const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
     const intercept = (sumY - slope * sumX) / n;
-    
+
     return { slope, intercept };
   }
 
   // Prophet-подобная модель
-  private fitProphetModel(data: TimeSeriesData[]): { weekly: number[], monthly: number[] } {
+  private fitProphetModel(data: TimeSeriesData[]): { weekly: number[]; monthly: number[] } {
     const weeklyPattern = new Array(7).fill(0);
     const weeklyCount = new Array(7).fill(0);
     const monthlyPattern = new Array(12).fill(0);
     const monthlyCount = new Array(12).fill(0);
 
-    data.forEach(d => {
+    data.forEach((d) => {
       weeklyPattern[d.dayOfWeek] += d.revenue;
       weeklyCount[d.dayOfWeek]++;
       monthlyPattern[d.month] += d.revenue;
       monthlyCount[d.month]++;
     });
 
-    const weeklySeasonality = weeklyPattern.map((revenue, day) => 
-      weeklyCount[day] > 0 ? revenue / weeklyCount[day] : 0
+    const weeklySeasonality = weeklyPattern.map((revenue, day) =>
+      weeklyCount[day] > 0 ? revenue / weeklyCount[day] : 0,
     );
-    
-    const monthlySeasonality = monthlyPattern.map((revenue, month) => 
-      monthlyCount[month] > 0 ? revenue / monthlyCount[month] : 0
+
+    const monthlySeasonality = monthlyPattern.map((revenue, month) =>
+      monthlyCount[month] > 0 ? revenue / monthlyCount[month] : 0,
     );
 
     return { weekly: weeklySeasonality, monthly: monthlySeasonality };
@@ -311,23 +315,25 @@ export class SimpleMLForecastingEngine {
   private fitLSTMModel(data: TimeSeriesData[]): number[] {
     if (data.length < 10) return [0.1, 0.1, 0.1];
 
-    const revenues = data.map(d => d.revenue);
+    const revenues = data.map((d) => d.revenue);
     const avgRevenue = revenues.reduce((sum, rev) => sum + rev, 0) / revenues.length;
-    
+
     // Простые веса для нейросети
     const weights = [
       revenues.slice(-3).reduce((sum, rev) => sum + rev, 0) / 3 / avgRevenue, // Последние 3 дня
       revenues.slice(-7).reduce((sum, rev) => sum + rev, 0) / 7 / avgRevenue, // Последние 7 дней
-      revenues.slice(-14).reduce((sum, rev) => sum + rev, 0) / Math.min(14, revenues.length) / avgRevenue // Последние 14 дней
+      revenues.slice(-14).reduce((sum, rev) => sum + rev, 0) /
+        Math.min(14, revenues.length) /
+        avgRevenue, // Последние 14 дней
     ];
-    
-    return weights.map(w => Math.max(0.1, Math.min(2, w)));
+
+    return weights.map((w) => Math.max(0.1, Math.min(2, w)));
   }
 
   // Основной метод прогнозирования
   public async generateMLForecast(days: number = 7): Promise<ForecastData[]> {
     const timeSeriesData = this.prepareTimeSeriesData();
-    
+
     if (timeSeriesData.length < 7) {
       return this.generateFallbackForecast(days);
     }
@@ -340,8 +346,9 @@ export class SimpleMLForecastingEngine {
     // Генерация прогнозов
     const forecasts: ForecastData[] = [];
     const lastDate = new Date(timeSeriesData[timeSeriesData.length - 1].date);
-    const avgRevenue = timeSeriesData.reduce((sum, d) => sum + d.revenue, 0) / timeSeriesData.length;
-    const historicalRevenues = timeSeriesData.map(d => d.revenue);
+    const avgRevenue =
+      timeSeriesData.reduce((sum, d) => sum + d.revenue, 0) / timeSeriesData.length;
+    const historicalRevenues = timeSeriesData.map((d) => d.revenue);
     const { clampLimit } = calculateHistoricalClamp(historicalRevenues, avgRevenue);
     const ensembleWeights = {
       arima: 0.3,
@@ -383,7 +390,7 @@ export class SimpleMLForecastingEngine {
             `final=${formatDebugNumber(safePrediction)}`,
         );
         (Object.keys(componentPredictions) as Array<keyof typeof componentPredictions>).forEach(
-          component => {
+          (component) => {
             const weight = ensembleWeights[component];
             const prediction = componentPredictions[component];
             const contribution = prediction * weight;
@@ -401,7 +408,10 @@ export class SimpleMLForecastingEngine {
       const factors = this.calculateInfluenceFactors(forecastDate, timeSeriesData);
 
       // Расчет уверенности
-      const confidence = this.calculateMLConfidence(timeSeriesData.length, Math.abs(arimaModel.slope));
+      const confidence = this.calculateMLConfidence(
+        timeSeriesData.length,
+        Math.abs(arimaModel.slope),
+      );
 
       // Определение тренда
       const trend = arimaModel.slope > 0.05 ? 'up' : arimaModel.slope < -0.05 ? 'down' : 'stable';
@@ -482,18 +492,23 @@ export class SimpleMLForecastingEngine {
       historicalPattern: historicalPatternFactor,
       economicCycle: economicCycleFactor,
       localEvent: localEventFactor,
-      customerSegment: customerSegmentFactor
+      customerSegment: customerSegmentFactor,
     };
   }
 
   // Расчет сезонного фактора
-  private calculateSeasonalFactor(dayOfWeek: number, month: number, data: TimeSeriesData[]): number {
-    const dayOfWeekData = data.filter(d => d.dayOfWeek === dayOfWeek);
-    const monthData = data.filter(d => d.month === month);
-    
+  private calculateSeasonalFactor(
+    dayOfWeek: number,
+    month: number,
+    data: TimeSeriesData[],
+  ): number {
+    const dayOfWeekData = data.filter((d) => d.dayOfWeek === dayOfWeek);
+    const monthData = data.filter((d) => d.month === month);
+
     if (dayOfWeekData.length === 0 || monthData.length === 0) return 1;
 
-    const avgDayRevenue = dayOfWeekData.reduce((sum, d) => sum + d.revenue, 0) / dayOfWeekData.length;
+    const avgDayRevenue =
+      dayOfWeekData.reduce((sum, d) => sum + d.revenue, 0) / dayOfWeekData.length;
     const avgMonthRevenue = monthData.reduce((sum, d) => sum + d.revenue, 0) / monthData.length;
     const overallAvg = data.reduce((sum, d) => sum + d.revenue, 0) / data.length;
 
@@ -504,8 +519,8 @@ export class SimpleMLForecastingEngine {
   private calculateTrendFactor(data: TimeSeriesData[]): number {
     if (data.length < 7) return 0;
 
-    const recent = data.slice(-7).map(d => d.revenue);
-    const older = data.slice(-14, -7).map(d => d.revenue);
+    const recent = data.slice(-7).map((d) => d.revenue);
+    const older = data.slice(-14, -7).map((d) => d.revenue);
 
     const recentAvg = recent.reduce((sum, rev) => sum + rev, 0) / recent.length;
     const olderAvg = older.reduce((sum, rev) => sum + rev, 0) / older.length;
@@ -518,7 +533,7 @@ export class SimpleMLForecastingEngine {
     const month = date.getMonth();
     const isWinter = month >= 11 || month <= 2;
     const isSummer = month >= 5 && month <= 8;
-    
+
     if (isWinter) return -0.1;
     if (isSummer) return 0.05;
     return 0;
@@ -528,12 +543,12 @@ export class SimpleMLForecastingEngine {
   private calculateHolidayFactor(date: Date): number {
     const month = date.getMonth();
     const day = date.getDate();
-    
+
     if (month === 0 && day === 1) return 0.3; // Новый год
     if (month === 1 && day === 23) return 0.2; // День защитника отечества
     if (month === 2 && day === 8) return 0.2; // Международный женский день
     if (month === 4 && day === 9) return 0.3; // День Победы
-    
+
     return 0;
   }
 
@@ -546,10 +561,10 @@ export class SimpleMLForecastingEngine {
 
   // Расчет исторического паттерна
   private calculateHistoricalPatternFactor(dayOfWeek: number, data: TimeSeriesData[]): number {
-    const sameDayData = data.filter(d => d.dayOfWeek === dayOfWeek);
+    const sameDayData = data.filter((d) => d.dayOfWeek === dayOfWeek);
     if (sameDayData.length < 2) return 0;
 
-    const revenues = sameDayData.map(d => d.revenue);
+    const revenues = sameDayData.map((d) => d.revenue);
     const recent = revenues.slice(-3);
     const older = revenues.slice(-6, -3);
 
@@ -572,10 +587,8 @@ export class SimpleMLForecastingEngine {
 
   // Расчет фактора сегментации клиентов
   private calculateCustomerSegmentFactor(dayOfWeek: number): number {
-    const segment = this.customerSegments.find(s => 
-      s.seasonality[dayOfWeek] > 0
-    );
-    
+    const segment = this.customerSegments.find((s) => s.seasonality[dayOfWeek] > 0);
+
     return segment ? segment.seasonality[dayOfWeek] / 1000 : 0;
   }
 
@@ -583,7 +596,7 @@ export class SimpleMLForecastingEngine {
   private calculateMLConfidence(dataLength: number, trendStability: number): number {
     const dataQuality = Math.min(1, dataLength / 100);
     const stability = Math.max(0, 1 - trendStability);
-    
+
     return Math.min(0.95, stability * 0.7 + dataQuality * 0.3);
   }
 
@@ -591,7 +604,8 @@ export class SimpleMLForecastingEngine {
   private generateFallbackForecast(days: number): ForecastData[] {
     const forecasts: ForecastData[] = [];
     const lastDate = new Date(this.transactions[this.transactions.length - 1].date);
-    const avgRevenue = this.transactions.reduce((sum, t) => sum + t.amount, 0) / this.transactions.length;
+    const avgRevenue =
+      this.transactions.reduce((sum, t) => sum + t.amount, 0) / this.transactions.length;
 
     for (let i = 1; i <= days; i++) {
       const forecastDate = addDays(lastDate, i);
@@ -643,10 +657,10 @@ export class SimpleMLForecastingEngine {
   }
 
   // Получение информации о сегментах
-  public getSegmentsInfo(): { customers: CustomerSegment[], products: ProductSegment[] } {
+  public getSegmentsInfo(): { customers: CustomerSegment[]; products: ProductSegment[] } {
     return {
       customers: this.customerSegments,
-      products: this.productSegments
+      products: this.productSegments,
     };
   }
 }

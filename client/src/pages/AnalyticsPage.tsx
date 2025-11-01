@@ -1,17 +1,25 @@
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { RevenueChart } from "@/components/RevenueChart";
-import { DayOfWeekChart } from "@/components/DayOfWeekChart";
-import { RevenueForecastCard } from "@/components/RevenueForecastCard";
-import { CustomerClustersCard } from "@/components/CustomerClustersCard";
-import { AnomaliesCard } from "@/components/AnomaliesCard";
-import { TrendAnalysisCard } from "@/components/TrendAnalysisCard";
-import { MonthlyReportCard } from "@/components/MonthlyReportCard";
-import { UploadTurnoverButton } from "@/components/UploadTurnoverButton";
-import { UploadTrainingDataButton } from "@/components/UploadTrainingDataButton";
-import type { AnalyticsResponse } from "@shared/schema";
-import { TrendingUp, TrendingDown, Calendar, Target, BarChart3, Users, AlertTriangle } from "lucide-react";
-import { format } from "date-fns";
-import { ru } from "date-fns/locale";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { RevenueChart } from '@/components/RevenueChart';
+import { DayOfWeekChart } from '@/components/DayOfWeekChart';
+import { RevenueForecastCard } from '@/components/RevenueForecastCard';
+import { CustomerClustersCard } from '@/components/CustomerClustersCard';
+import { AnomaliesCard } from '@/components/AnomaliesCard';
+import { TrendAnalysisCard } from '@/components/TrendAnalysisCard';
+import { MonthlyReportCard } from '@/components/MonthlyReportCard';
+import { UploadTurnoverButton } from '@/components/UploadTurnoverButton';
+import { UploadTrainingDataButton } from '@/components/UploadTrainingDataButton';
+import type { AnalyticsResponse } from '@shared/schema';
+import {
+  TrendingUp,
+  TrendingDown,
+  Calendar,
+  Target,
+  BarChart3,
+  Users,
+  AlertTriangle,
+} from 'lucide-react';
+import { format } from 'date-fns';
+import { ru } from 'date-fns/locale';
 
 interface AnalyticsPageProps {
   analytics: AnalyticsResponse;
@@ -25,7 +33,8 @@ export default function AnalyticsPage({ analytics }: AnalyticsPageProps) {
 
   // Расчет периода данных
   const startDate = dailyData.length > 0 ? new Date(dailyData[0].period) : new Date();
-  const endDate = dailyData.length > 0 ? new Date(dailyData[dailyData.length - 1].period) : new Date();
+  const endDate =
+    dailyData.length > 0 ? new Date(dailyData[dailyData.length - 1].period) : new Date();
   const dataRangeText = `${format(startDate, 'd MMMM yyyy', { locale: ru })} - ${format(endDate, 'd MMMM yyyy', { locale: ru })}`;
 
   return (
@@ -33,9 +42,7 @@ export default function AnalyticsPage({ analytics }: AnalyticsPageProps) {
       {/* Заголовок страницы */}
       <div className="space-y-2">
         <h1 className="text-3xl font-bold tracking-tight">Аналитика</h1>
-        <p className="text-muted-foreground">
-          Детальный анализ показателей бизнеса и прогнозы
-        </p>
+        <p className="text-muted-foreground">Детальный анализ показателей бизнеса и прогнозы</p>
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Calendar className="w-4 h-4" />
           <span>{dataRangeText}</span>
@@ -52,9 +59,7 @@ export default function AnalyticsPage({ analytics }: AnalyticsPageProps) {
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Общая выручка</CardDescription>
-            <CardTitle className="text-2xl">
-              {kpi.totalRevenue.toLocaleString('ru-RU')} ₽
-            </CardTitle>
+            <CardTitle className="text-2xl">{kpi.totalRevenue.toLocaleString('ru-RU')} ₽</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="flex items-center gap-2 text-sm">
@@ -118,9 +123,7 @@ export default function AnalyticsPage({ analytics }: AnalyticsPageProps) {
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Количество чеков</CardDescription>
-            <CardTitle className="text-2xl">
-              {kpi.totalChecks.toLocaleString('ru-RU')}
-            </CardTitle>
+            <CardTitle className="text-2xl">{kpi.totalChecks.toLocaleString('ru-RU')}</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="flex items-center gap-2 text-sm">
@@ -135,9 +138,7 @@ export default function AnalyticsPage({ analytics }: AnalyticsPageProps) {
                 ) : (
                   <>
                     <TrendingDown className="w-4 h-4 text-red-500" />
-                    <span className="text-red-500 font-medium">
-                      {kpi.checksGrowth.toFixed(1)}%
-                    </span>
+                    <span className="text-red-500 font-medium">{kpi.checksGrowth.toFixed(1)}%</span>
                   </>
                 )
               ) : (
@@ -156,16 +157,12 @@ export default function AnalyticsPage({ analytics }: AnalyticsPageProps) {
                 kpi.revenueGrowthYoY >= 0 ? (
                   <>
                     <TrendingUp className="w-6 h-6 text-green-500" />
-                    <span className="text-green-500">
-                      +{kpi.revenueGrowthYoY.toFixed(1)}%
-                    </span>
+                    <span className="text-green-500">+{kpi.revenueGrowthYoY.toFixed(1)}%</span>
                   </>
                 ) : (
                   <>
                     <TrendingDown className="w-6 h-6 text-red-500" />
-                    <span className="text-red-500">
-                      {kpi.revenueGrowthYoY.toFixed(1)}%
-                    </span>
+                    <span className="text-red-500">{kpi.revenueGrowthYoY.toFixed(1)}%</span>
                   </>
                 )
               ) : (
@@ -196,9 +193,7 @@ export default function AnalyticsPage({ analytics }: AnalyticsPageProps) {
       </div>
 
       {/* Улучшенный месячный отчет */}
-      {monthlyData.length > 0 && (
-        <MonthlyReportCard monthlyData={monthlyData} />
-      )}
+      {monthlyData.length > 0 && <MonthlyReportCard monthlyData={monthlyData} />}
 
       {/* Продвинутая аналитика */}
       {advancedAnalytics && (
@@ -214,7 +209,9 @@ export default function AnalyticsPage({ analytics }: AnalyticsPageProps) {
             <p className="text-muted-foreground">
               Продвинутая аналитика с использованием машинного обучения и внешних данных
               <br />
-              <span className="text-orange-600 font-medium">⚠️ Функция в разработке - возможны неточности в расчетах</span>
+              <span className="text-orange-600 font-medium">
+                ⚠️ Функция в разработке - возможны неточности в расчетах
+              </span>
             </p>
           </div>
 

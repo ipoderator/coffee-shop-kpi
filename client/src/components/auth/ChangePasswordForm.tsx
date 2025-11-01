@@ -79,11 +79,7 @@ export function ChangePasswordForm({ onSuccess, onCancel }: ChangePasswordFormPr
                 onClick={() => setShowCurrentPassword(!showCurrentPassword)}
                 disabled={isSubmitting || isLoading}
               >
-                {showCurrentPassword ? (
-                  <EyeOff className="h-4 w-4" />
-                ) : (
-                  <Eye className="h-4 w-4" />
-                )}
+                {showCurrentPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </Button>
             </div>
             {errors.currentPassword && (
@@ -113,11 +109,7 @@ export function ChangePasswordForm({ onSuccess, onCancel }: ChangePasswordFormPr
                 onClick={() => setShowNewPassword(!showNewPassword)}
                 disabled={isSubmitting || isLoading}
               >
-                {showNewPassword ? (
-                  <EyeOff className="h-4 w-4" />
-                ) : (
-                  <Eye className="h-4 w-4" />
-                )}
+                {showNewPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </Button>
             </div>
             {errors.newPassword && (
@@ -144,11 +136,7 @@ export function ChangePasswordForm({ onSuccess, onCancel }: ChangePasswordFormPr
                 onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                 disabled={isSubmitting || isLoading}
               >
-                {showConfirmPassword ? (
-                  <EyeOff className="h-4 w-4" />
-                ) : (
-                  <Eye className="h-4 w-4" />
-                )}
+                {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </Button>
             </div>
             {errors.confirmPassword && (
@@ -157,17 +145,11 @@ export function ChangePasswordForm({ onSuccess, onCancel }: ChangePasswordFormPr
           </div>
 
           <div className="flex gap-2">
-            <Button
-              type="submit"
-              className="flex-1"
-              disabled={isSubmitting || isLoading}
-            >
-              {(isSubmitting || isLoading) && (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              )}
+            <Button type="submit" className="flex-1" disabled={isSubmitting || isLoading}>
+              {(isSubmitting || isLoading) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Изменить пароль
             </Button>
-            
+
             {onCancel && (
               <Button
                 type="button"

@@ -18,7 +18,7 @@ process.env.NODE_ENV = 'development';
 const server = spawn('npx', ['tsx', 'server/index.ts'], {
   cwd: __dirname,
   stdio: 'inherit',
-  env: { ...process.env, PORT: '5000', NODE_ENV: 'development' }
+  env: { ...process.env, PORT: '5000', NODE_ENV: 'development' },
 });
 
 server.on('error', (err) => {

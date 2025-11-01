@@ -52,7 +52,7 @@ export function generateJWT(user: User): string {
     role: user.role,
   };
 
-  return jwt.sign(payload, JWT_SECRET, { 
+  return jwt.sign(payload, JWT_SECRET, {
     expiresIn: `${SESSION_EXPIRY_DAYS}d`,
     issuer: 'coffee-kpi-dashboard',
   });
@@ -123,11 +123,11 @@ export function sanitizeUser(user: User) {
  */
 export function requireAuth(req: any, res: any, next: any) {
   const authHeader = req.headers.authorization;
-  
+
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ 
-      success: false, 
-      message: 'Токен авторизации не предоставлен' 
+    return res.status(401).json({
+      success: false,
+      message: 'Токен авторизации не предоставлен',
     });
   }
 
@@ -135,9 +135,9 @@ export function requireAuth(req: any, res: any, next: any) {
   const decoded = verifyJWT(token);
 
   if (!decoded) {
-    return res.status(401).json({ 
-      success: false, 
-      message: 'Недействительный токен авторизации' 
+    return res.status(401).json({
+      success: false,
+      message: 'Недействительный токен авторизации',
     });
   }
 
@@ -150,11 +150,11 @@ export function requireAuth(req: any, res: any, next: any) {
  */
 export async function requireAuthCookie(req: any, res: any, next: any) {
   const sessionToken = req.cookies?.session_token;
-  
+
   if (!sessionToken) {
-    return res.status(401).json({ 
-      success: false, 
-      message: 'Сессия не найдена' 
+    return res.status(401).json({
+      success: false,
+      message: 'Сессия не найдена',
     });
   }
 
@@ -162,19 +162,19 @@ export async function requireAuthCookie(req: any, res: any, next: any) {
     // Импортируем storage здесь, чтобы избежать циклических зависимостей
     const { storage } = await import('../storage');
     const session = await storage.getSessionByToken(sessionToken);
-    
+
     if (!session || isSessionExpired(session.expiresAt)) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Сессия истекла' 
+      return res.status(401).json({
+        success: false,
+        message: 'Сессия истекла',
       });
     }
 
     const user = await storage.getUserById(session.userId);
     if (!user || !user.isActive) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Пользователь не найден или заблокирован' 
+      return res.status(401).json({
+        success: false,
+        message: 'Пользователь не найден или заблокирован',
       });
     }
 
@@ -189,9 +189,9 @@ export async function requireAuthCookie(req: any, res: any, next: any) {
     next();
   } catch (error) {
     console.error('Auth middleware error:', error);
-    return res.status(500).json({ 
-      success: false, 
-      message: 'Ошибка проверки авторизации' 
+    return res.status(500).json({
+      success: false,
+      message: 'Ошибка проверки авторизации',
     });
   }
 }
@@ -226,14 +226,14 @@ export async function requireAuthAny(req: any, res: any, next: any) {
 export function requireAdmin(req: any, res: any, next: any) {
   requireAuth(req, res, (err: any) => {
     if (err) return next(err);
-    
+
     if (req.user.role !== 'admin') {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Недостаточно прав доступа' 
+      return res.status(403).json({
+        success: false,
+        message: 'Недостаточно прав доступа',
       });
     }
-    
+
     next();
   });
 }

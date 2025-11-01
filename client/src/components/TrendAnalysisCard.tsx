@@ -18,9 +18,7 @@ export function TrendAnalysisCard({ trendAnalysis }: TrendAnalysisCardProps) {
             <BarChart3 className="h-5 w-5" />
             Анализ трендов
           </CardTitle>
-          <CardDescription>
-            Анализ направлений и силы трендов
-          </CardDescription>
+          <CardDescription>Анализ направлений и силы трендов</CardDescription>
         </CardHeader>
         <CardContent>
           <p className="text-muted-foreground text-center py-4">
@@ -125,7 +123,11 @@ export function TrendAnalysisCard({ trendAnalysis }: TrendAnalysisCardProps) {
               <span className="font-semibold">{getDirectionLabel(trendAnalysis.direction)}</span>
             </div>
             <div className="text-2xl font-bold text-primary">
-              {trendAnalysis.direction === 'up' ? '+' : trendAnalysis.direction === 'down' ? '-' : '~'}
+              {trendAnalysis.direction === 'up'
+                ? '+'
+                : trendAnalysis.direction === 'down'
+                  ? '-'
+                  : '~'}
             </div>
             <div className="text-sm text-muted-foreground">Направление</div>
           </div>

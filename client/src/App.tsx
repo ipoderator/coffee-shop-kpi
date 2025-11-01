@@ -1,24 +1,27 @@
 import { useEffect, useState } from 'react';
-import { Switch, Route, Redirect } from "wouter";
-import { queryClient } from "./lib/queryClient";
-import { QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { Toaster } from "@/components/ui/toaster";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { AppSidebar } from "@/components/AppSidebar";
-import { FileUpload } from "@/components/FileUpload";
-import { AnimatedBackground } from "@/components/AnimatedBackground";
-import { AuthPage } from "@/components/auth/AuthPage";
-import { LogoutButton } from "@/components/auth/LogoutButton";
-import { useAuth } from "@/hooks/use-auth";
-import { useToast } from "@/hooks/use-toast";
-import NotFound from "@/pages/not-found";
-import OverviewPage from "@/pages/OverviewPage";
-import SalesPage from "@/pages/SalesPage";
-import PaymentsPage from "@/pages/PaymentsPage";
-import DataPage from "@/pages/DataPage";
-import MonthlyReportPage from "@/pages/MonthlyReportPage";
-import IntegrationsPage from "@/pages/IntegrationsPage";
+import { Switch, Route, Redirect } from 'wouter';
+import { queryClient } from './lib/queryClient';
+import { QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { Toaster } from '@/components/ui/toaster';
+import { TooltipProvider } from '@/components/ui/tooltip';
+import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
+import { FileUpload } from '@/components/FileUpload';
+import { AppSidebar } from '@/components/AppSidebar';
+import { DateRangeFilter } from '@/components/DateRangeFilter';
+import { AnimatedBackground } from '@/components/AnimatedBackground';
+import { AuthPage } from '@/components/auth/AuthPage';
+import { LogoutButton } from '@/components/auth/LogoutButton';
+import { useAuth } from '@/hooks/use-auth';
+import { useToast } from '@/hooks/use-toast';
+import { DateFilterProvider, useDateFilter } from '@/hooks/use-date-filter';
+import NotFound from '@/pages/not-found';
+import OverviewPage from '@/pages/OverviewPage';
+import SalesPage from '@/pages/SalesPage';
+import PaymentsPage from '@/pages/PaymentsPage';
+import DataPage from '@/pages/DataPage';
+import MonthlyReportPage from '@/pages/MonthlyReportPage';
+import IntegrationsPage from '@/pages/IntegrationsPage';
+import ProfitabilityPage from '@/pages/ProfitabilityPage';
 import { motion } from 'framer-motion';
 import { Coffee, TrendingUp, BarChart3 } from 'lucide-react';
 import type { AnalyticsResponse, FileUploadResponse } from '@shared/schema';
@@ -27,16 +30,52 @@ import type { CSSProperties } from 'react';
 function DashboardLayout() {
   const { toast } = useToast();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
+  const { filter } = useDateFilter();
   const [uploadId, setUploadId] = useState<string | null>(() => {
     // Restore uploadId from localStorage on mount
     return localStorage.getItem('coffee-kpi-uploadId');
   });
   const [isUploading, setIsUploading] = useState(false);
 
-  const { data: analytics, isLoading, isError, error } = useQuery<AnalyticsResponse>({
-    queryKey: ['/api/analytics', uploadId],
+  const fromIso = filter.from?.toISOString();
+  const toIso = filter.to?.toISOString();
+
+  const {
+    data: analytics,
+    isLoading,
+    isError,
+    error,
+  } = useQuery<AnalyticsResponse>({
+    queryKey: ['/api/analytics', uploadId, { preset: filter.preset, from: fromIso, to: toIso }],
     enabled: !!uploadId,
-    retry: false,
+    queryFn: async (): Promise<AnalyticsResponse> => {
+      if (!uploadId) {
+        throw new Error('Отсутствует идентификатор набора данных');
+      }
+
+      const params = new URLSearchParams();
+      params.set('preset', filter.preset);
+      if (filter.preset === 'custom') {
+        if (fromIso) {
+          params.set('from', fromIso);
+        }
+        if (toIso) {
+          params.set('to', toIso);
+        }
+      }
+
+      const suffix = params.size > 0 ? `?${params.toString()}` : '';
+      const res = await fetch(`/api/analytics/${uploadId}${suffix}`, {
+        credentials: 'include',
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || 'Не удалось загрузить аналитику');
+      }
+
+      return (await res.json()) as AnalyticsResponse;
+    },
   });
 
   useEffect(() => {
@@ -79,7 +118,7 @@ function DashboardLayout() {
         // Persist uploadId to localStorage
         localStorage.setItem('coffee-kpi-uploadId', response.uploadId);
         queryClient.invalidateQueries({ queryKey: ['/api/analytics', response.uploadId] });
-        
+
         toast({
           title: 'Файл успешно загружен',
           description: `Обработано ${response.rowsProcessed} записей`,
@@ -103,8 +142,8 @@ function DashboardLayout() {
   };
 
   const style = {
-    "--sidebar-width": "16rem",
-    "--sidebar-width-icon": "3rem",
+    '--sidebar-width': '16rem',
+    '--sidebar-width-icon': '3rem',
   } as CSSProperties;
 
   // Show auth page if not authenticated
@@ -130,18 +169,18 @@ function DashboardLayout() {
     return (
       <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5 flex items-center justify-center p-4 relative overflow-hidden">
         <AnimatedBackground />
-        
+
         <div className="max-w-4xl w-full space-y-10 relative z-10">
-          <motion.div 
+          <motion.div
             className="text-center space-y-6"
             initial={{ opacity: 0, y: -30 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.8, ease: "easeOut" }}
+            transition={{ duration: 0.8, ease: 'easeOut' }}
           >
             <motion.div
               initial={{ scale: 0.8, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              transition={{ delay: 0.2, duration: 0.6, type: "spring" }}
+              transition={{ delay: 0.2, duration: 0.6, type: 'spring' }}
               className="inline-flex items-center gap-3 px-6 py-3 rounded-full bg-gradient-to-r from-primary/20 via-chart-3/20 to-chart-4/20 border border-primary/30 backdrop-blur-sm"
             >
               <span className="text-sm font-semibold bg-gradient-to-r from-primary via-chart-3 to-chart-4 bg-clip-text text-transparent">
@@ -149,7 +188,7 @@ function DashboardLayout() {
               </span>
             </motion.div>
 
-            <motion.h1 
+            <motion.h1
               className="text-5xl md:text-6xl font-bold leading-tight"
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
@@ -161,8 +200,8 @@ function DashboardLayout() {
               <br />
               <span className="text-foreground">Dashboard</span>
             </motion.h1>
-            
-            <motion.h2 
+
+            <motion.h2
               className="text-2xl md:text-3xl font-semibold bg-gradient-to-r from-foreground to-foreground/60 bg-clip-text text-transparent"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -170,15 +209,15 @@ function DashboardLayout() {
             >
               Анализ показателей кофейни
             </motion.h2>
-            
-            <motion.p 
+
+            <motion.p
               className="text-lg text-muted-foreground max-w-2xl mx-auto leading-relaxed"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 0.5, duration: 0.6 }}
             >
-              Загрузите Excel, CSV или PDF файл с данными о продажах для получения детальной аналитики 
-              с KPI метриками, графиками и сравнением периодов
+              Загрузите Excel, CSV или PDF файл с данными о продажах для получения детальной
+              аналитики с KPI метриками, графиками и сравнением периодов
             </motion.p>
 
             <motion.div
@@ -197,10 +236,12 @@ function DashboardLayout() {
                   className="flex flex-col items-center gap-2"
                   initial={{ opacity: 0, scale: 0 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  transition={{ delay: 0.7 + index * 0.1, type: "spring" }}
+                  transition={{ delay: 0.7 + index * 0.1, type: 'spring' }}
                   whileHover={{ scale: 1.1 }}
                 >
-                  <div className={`p-3 rounded-full bg-gradient-to-br from-card to-card/50 border border-border/50 ${feature.color}`}>
+                  <div
+                    className={`p-3 rounded-full bg-gradient-to-br from-card to-card/50 border border-border/50 ${feature.color}`}
+                  >
                     <feature.icon className="w-5 h-5" />
                   </div>
                   <span className="text-xs text-muted-foreground font-medium">{feature.label}</span>
@@ -208,7 +249,7 @@ function DashboardLayout() {
               ))}
             </motion.div>
           </motion.div>
-          
+
           <FileUpload onFileSelect={handleFileSelect} isProcessing={isUploading} />
         </div>
       </div>
@@ -250,6 +291,7 @@ function DashboardLayout() {
             <div className="flex items-center h-14 px-4 gap-4">
               <SidebarTrigger data-testid="button-sidebar-toggle" />
               <h1 className="text-lg font-semibold flex-1">Coffee KPI Dashboard</h1>
+              <DateRangeFilter period={analytics.period} />
               {user && <LogoutButton user={user} />}
             </div>
           </header>
@@ -270,6 +312,9 @@ function DashboardLayout() {
               <Route path="/data">
                 <DataPage analytics={analytics} />
               </Route>
+              <Route path="/profitability">
+                <ProfitabilityPage />
+              </Route>
               <Route path="/integrations">
                 <IntegrationsPage />
               </Route>
@@ -289,8 +334,10 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider delayDuration={200} skipDelayDuration={100}>
-        <Toaster />
-        <DashboardLayout />
+        <DateFilterProvider>
+          <Toaster />
+          <DashboardLayout />
+        </DateFilterProvider>
       </TooltipProvider>
     </QueryClientProvider>
   );

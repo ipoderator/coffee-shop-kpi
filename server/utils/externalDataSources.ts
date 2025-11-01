@@ -59,7 +59,10 @@ export interface SocialSentiment {
 export class WeatherService {
   private readonly apiKey: string;
   private readonly baseUrl = 'https://api.openweathermap.org/data/2.5';
-  private readonly cache = new Map<string, { data: WeatherAPIResponse | WeatherAPIResponse[]; timestamp: number }>();
+  private readonly cache = new Map<
+    string,
+    { data: WeatherAPIResponse | WeatherAPIResponse[]; timestamp: number }
+  >();
   private readonly cacheTimeout = 30 * 60 * 1000; // 30 минут
 
   constructor(apiKey: string) {
@@ -69,7 +72,7 @@ export class WeatherService {
   async getCurrentWeather(lat: number, lon: number): Promise<WeatherAPIResponse> {
     const cacheKey = `current_${lat}_${lon}`;
     const cached = this.cache.get(cacheKey);
-    
+
     if (
       cached &&
       Date.now() - cached.timestamp < this.cacheTimeout &&
@@ -80,9 +83,9 @@ export class WeatherService {
 
     try {
       const response = await fetch(
-        `${this.baseUrl}/weather?lat=${lat}&lon=${lon}&appid=${this.apiKey}&units=metric&lang=ru`
+        `${this.baseUrl}/weather?lat=${lat}&lon=${lon}&appid=${this.apiKey}&units=metric&lang=ru`,
       );
-      
+
       if (!response.ok) {
         throw new Error(`Weather API error: ${response.status}`);
       }
@@ -107,23 +110,23 @@ export class WeatherService {
     }
   }
 
-  async getWeatherForecast(lat: number, lon: number, days: number = 5): Promise<WeatherAPIResponse[]> {
+  async getWeatherForecast(
+    lat: number,
+    lon: number,
+    days: number = 5,
+  ): Promise<WeatherAPIResponse[]> {
     const cacheKey = `forecast_${lat}_${lon}_${days}`;
     const cached = this.cache.get(cacheKey);
-    
-    if (
-      cached &&
-      Date.now() - cached.timestamp < this.cacheTimeout &&
-      Array.isArray(cached.data)
-    ) {
+
+    if (cached && Date.now() - cached.timestamp < this.cacheTimeout && Array.isArray(cached.data)) {
       return cached.data;
     }
 
     try {
       const response = await fetch(
-        `${this.baseUrl}/forecast?lat=${lat}&lon=${lon}&appid=${this.apiKey}&units=metric&lang=ru&cnt=${days * 8}`
+        `${this.baseUrl}/forecast?lat=${lat}&lon=${lon}&appid=${this.apiKey}&units=metric&lang=ru&cnt=${days * 8}`,
       );
-      
+
       if (!response.ok) {
         throw new Error(`Weather Forecast API error: ${response.status}`);
       }
@@ -133,7 +136,7 @@ export class WeatherService {
 
       // Группируем данные по дням
       const dailyData = new Map<string, any[]>();
-      
+
       data.list.forEach((item: any) => {
         const date = new Date(item.dt * 1000).toISOString().split('T')[0];
         if (!dailyData.has(date)) {
@@ -194,11 +197,11 @@ export class WeatherService {
   private getFallbackForecast(days: number): WeatherAPIResponse[] {
     const forecast: WeatherAPIResponse[] = [];
     const today = new Date();
-    
+
     for (let i = 1; i <= days; i++) {
       const date = new Date(today);
       date.setDate(today.getDate() + i);
-      
+
       forecast.push({
         date: date.toISOString().split('T')[0],
         temperature: 15 + Math.sin(i * 0.5) * 5,
@@ -210,7 +213,7 @@ export class WeatherService {
         visibility: 8 + Math.random() * 4,
       });
     }
-    
+
     return forecast;
   }
 }
@@ -236,19 +239,20 @@ export class EconomicService {
   async getEconomicIndicators(): Promise<EconomicIndicator> {
     const cacheKey = 'economic_indicators';
     const cached = this.cache.get(cacheKey);
-    
+
     if (cached && Date.now() - cached.timestamp < this.cacheTimeout) {
       return cached.data;
     }
 
     try {
       // Получаем данные из множественных источников параллельно
-      const [exchangeRate, inflationData, consumerConfidenceData, unemploymentData] = await Promise.all([
-        this.getExchangeRate(),
-        this.alphaVantageApiKey ? this.getInflationData() : null,
-        this.alphaVantageApiKey ? this.getConsumerConfidenceData() : null,
-        this.fredApiKey ? this.getUnemploymentData() : null
-      ]);
+      const [exchangeRate, inflationData, consumerConfidenceData, unemploymentData] =
+        await Promise.all([
+          this.getExchangeRate(),
+          this.alphaVantageApiKey ? this.getInflationData() : null,
+          this.alphaVantageApiKey ? this.getConsumerConfidenceData() : null,
+          this.fredApiKey ? this.getUnemploymentData() : null,
+        ]);
 
       const economicData: EconomicIndicator = {
         date: new Date().toISOString().split('T')[0],
@@ -273,7 +277,7 @@ export class EconomicService {
   private async getExchangeRate(): Promise<number> {
     try {
       const response = await fetch(`${this.baseUrl}/${this.exchangeRateApiKey}/latest/USD`);
-      
+
       if (!response.ok) {
         throw new Error(`Exchange Rate API error: ${response.status}`);
       }
@@ -290,9 +294,9 @@ export class EconomicService {
     try {
       // Используем Alpha Vantage API для получения данных об инфляции
       const response = await fetch(
-        `https://www.alphavantage.co/query?function=INFLATION&apikey=${this.alphaVantageApiKey}`
+        `https://www.alphavantage.co/query?function=INFLATION&apikey=${this.alphaVantageApiKey}`,
       );
-      
+
       if (response.ok) {
         const data = await response.json();
         // Извлекаем последнее значение инфляции
@@ -301,7 +305,7 @@ export class EconomicService {
           return parseFloat(inflationData[0].value);
         }
       }
-      
+
       return null;
     } catch (error) {
       console.error('Inflation API error:', error);
@@ -313,9 +317,9 @@ export class EconomicService {
     try {
       // Используем Alpha Vantage API для получения данных о потребительском доверии
       const response = await fetch(
-        `https://www.alphavantage.co/query?function=CONSUMER_SENTIMENT&apikey=${this.alphaVantageApiKey}`
+        `https://www.alphavantage.co/query?function=CONSUMER_SENTIMENT&apikey=${this.alphaVantageApiKey}`,
       );
-      
+
       if (response.ok) {
         const data = await response.json();
         const sentimentData = data.data;
@@ -323,7 +327,7 @@ export class EconomicService {
           return parseFloat(sentimentData[0].value);
         }
       }
-      
+
       return null;
     } catch (error) {
       console.error('Consumer Confidence API error:', error);
@@ -335,9 +339,9 @@ export class EconomicService {
     try {
       // Используем FRED API для получения данных о безработице
       const response = await fetch(
-        `https://api.stlouisfed.org/fred/series/observations?series_id=UNRATE&api_key=${this.fredApiKey}&file_type=json&limit=1&sort_order=desc`
+        `https://api.stlouisfed.org/fred/series/observations?series_id=UNRATE&api_key=${this.fredApiKey}&file_type=json&limit=1&sort_order=desc`,
       );
-      
+
       if (response.ok) {
         const data = await response.json();
         const observations = data.observations;
@@ -345,7 +349,7 @@ export class EconomicService {
           return parseFloat(observations[0].value);
         }
       }
-      
+
       return null;
     } catch (error) {
       console.error('Unemployment API error:', error);
@@ -382,19 +386,22 @@ export class HolidayService {
     this.apiKey = apiKey;
   }
 
-  async getHolidays(country: string = 'RU', year: number = new Date().getFullYear()): Promise<HolidayData[]> {
+  async getHolidays(
+    country: string = 'RU',
+    year: number = new Date().getFullYear(),
+  ): Promise<HolidayData[]> {
     const cacheKey = `holidays_${country}_${year}`;
     const cached = this.cache.get(cacheKey);
-    
+
     if (cached && Date.now() - cached.timestamp < this.cacheTimeout) {
       return cached.data;
     }
 
     try {
       const response = await fetch(
-        `${this.baseUrl}/holidays?api_key=${this.apiKey}&country=${country}&year=${year}`
+        `${this.baseUrl}/holidays?api_key=${this.apiKey}&country=${country}&year=${year}`,
       );
-      
+
       if (!response.ok) {
         throw new Error(`Holiday API error: ${response.status}`);
       }
@@ -418,10 +425,10 @@ export class HolidayService {
 
   private mapHolidayType(type: string): 'national' | 'religious' | 'regional' | 'unofficial' {
     const typeMap: { [key: string]: string } = {
-      'national': 'national',
-      'religious': 'religious',
-      'regional': 'regional',
-      'observance': 'unofficial',
+      national: 'national',
+      religious: 'religious',
+      regional: 'regional',
+      observance: 'unofficial',
     };
     return (typeMap[type] || 'unofficial') as any;
   }
@@ -429,17 +436,17 @@ export class HolidayService {
   private calculateHolidayImpact(name: string, type: string): number {
     // Базовое влияние по типу
     const baseImpact: { [key: string]: number } = {
-      'national': 0.2,
-      'religious': 0.15,
-      'regional': 0.1,
-      'observance': 0.05,
+      national: 0.2,
+      religious: 0.15,
+      regional: 0.1,
+      observance: 0.05,
     };
 
     let impact = baseImpact[type] || 0.05;
 
     // Специальные корректировки для известных праздников
     const nameLower = name.toLowerCase();
-    
+
     if (nameLower.includes('новый год') || nameLower.includes('рождество')) {
       impact = 0.3;
     } else if (nameLower.includes('день победы') || nameLower.includes('день защитника')) {
@@ -532,7 +539,7 @@ export class TrafficService {
   async getTrafficData(location: string): Promise<TrafficData> {
     const cacheKey = `traffic_${location}`;
     const cached = this.cache.get(cacheKey);
-    
+
     if (cached && Date.now() - cached.timestamp < this.cacheTimeout) {
       return cached.data;
     }
@@ -540,24 +547,25 @@ export class TrafficService {
     try {
       // Используем Google Maps Distance Matrix API для получения данных о трафике
       const response = await fetch(
-        `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${encodeURIComponent(location)}&destinations=${encodeURIComponent(location)}&departure_time=now&traffic_model=best_guess&key=${this.apiKey}`
+        `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${encodeURIComponent(location)}&destinations=${encodeURIComponent(location)}&departure_time=now&traffic_model=best_guess&key=${this.apiKey}`,
       );
-      
+
       if (!response.ok) {
         throw new Error(`Traffic API error: ${response.status}`);
       }
 
       const data = await response.json();
-      
+
       if (data.rows[0] && data.rows[0].elements[0]) {
         const element = data.rows[0].elements[0];
         const duration = element.duration_in_traffic?.value || element.duration.value;
         const normalDuration = element.duration.value;
-        
+
         const trafficData: TrafficData = {
           date: new Date().toISOString().split('T')[0],
           location,
-          congestionLevel: duration > normalDuration ? (duration - normalDuration) / normalDuration : 0,
+          congestionLevel:
+            duration > normalDuration ? (duration - normalDuration) / normalDuration : 0,
           averageSpeed: 0, // Требует дополнительных вычислений
           trafficVolume: 0, // Недоступно в бесплатном API
         };
@@ -602,19 +610,19 @@ export class SocialSentimentService {
   async getSocialSentiment(keywords: string[]): Promise<SocialSentiment[]> {
     const cacheKey = `sentiment_${keywords.join('_')}`;
     const cached = this.cache.get(cacheKey);
-    
+
     if (cached && Date.now() - cached.timestamp < this.cacheTimeout) {
       return cached.data;
     }
 
     try {
       const sentimentData: SocialSentiment[] = [];
-      
+
       // Получаем данные из множественных источников
       const [newsSentiment, twitterSentiment, redditSentiment] = await Promise.all([
         this.getNewsSentiment(keywords),
         this.twitterApiKey ? this.getTwitterSentiment(keywords) : [],
-        this.getRedditSentiment(keywords)
+        this.getRedditSentiment(keywords),
       ]);
 
       // Объединяем данные из всех источников
@@ -631,34 +639,37 @@ export class SocialSentimentService {
   private async getNewsSentiment(keywords: string[]): Promise<SocialSentiment[]> {
     try {
       const sentimentData: SocialSentiment[] = [];
-      
+
       for (const keyword of keywords) {
         // Используем NewsAPI для получения новостей
         const response = await fetch(
-          `https://newsapi.org/v2/everything?q=${encodeURIComponent(keyword)}&apiKey=${this.newsApiKey}&language=ru&sortBy=publishedAt&pageSize=20`
+          `https://newsapi.org/v2/everything?q=${encodeURIComponent(keyword)}&apiKey=${this.newsApiKey}&language=ru&sortBy=publishedAt&pageSize=20`,
         );
-        
+
         if (response.ok) {
           const data = await response.json();
           const articles = data.articles || [];
-          
+
           // Анализируем тональность заголовков и описаний
           const sentiment = this.analyzeTextSentiment(
-            articles.map((article: any) => `${article.title} ${article.description}`).join(' ')
+            articles.map((article: any) => `${article.title} ${article.description}`).join(' '),
           );
-          
+
           sentimentData.push({
             date: new Date().toISOString().split('T')[0],
             platform: 'news',
             sentiment: sentiment,
             volume: articles.length,
             keywords: [keyword],
-            engagement: articles.reduce((sum: number, article: any) => sum + (article.url ? 1 : 0), 0),
+            engagement: articles.reduce(
+              (sum: number, article: any) => sum + (article.url ? 1 : 0),
+              0,
+            ),
             reach: articles.length * 1000, // Примерная оценка охвата
           });
         }
       }
-      
+
       return sentimentData;
     } catch (error) {
       console.error('News API error:', error);
@@ -668,7 +679,7 @@ export class SocialSentimentService {
 
   private async getTwitterSentiment(keywords: string[]): Promise<SocialSentiment[]> {
     // Заглушка для Twitter API - в реальном приложении здесь был бы интеграция с Twitter API v2
-    return keywords.map(keyword => ({
+    return keywords.map((keyword) => ({
       date: new Date().toISOString().split('T')[0],
       platform: 'twitter',
       sentiment: this.analyzeKeywordSentiment(keyword),
@@ -681,7 +692,7 @@ export class SocialSentimentService {
 
   private async getRedditSentiment(keywords: string[]): Promise<SocialSentiment[]> {
     // Заглушка для Reddit API - в реальном приложении здесь был бы интеграция с Reddit API
-    return keywords.map(keyword => ({
+    return keywords.map((keyword) => ({
       date: new Date().toISOString().split('T')[0],
       platform: 'reddit',
       sentiment: this.analyzeKeywordSentiment(keyword),
@@ -695,34 +706,71 @@ export class SocialSentimentService {
   private analyzeTextSentiment(text: string): number {
     // Улучшенный анализ тональности текста
     const positiveWords = [
-      'хорошо', 'отлично', 'прекрасно', 'замечательно', 'качественно', 'вкусно', 'быстро', 'удобно',
-      'рекомендую', 'нравится', 'люблю', 'отличный', 'прекрасный', 'замечательный', 'качественный',
-      'вкусный', 'быстрый', 'удобный', 'рекомендую', 'отличная', 'прекрасная', 'замечательная'
+      'хорошо',
+      'отлично',
+      'прекрасно',
+      'замечательно',
+      'качественно',
+      'вкусно',
+      'быстро',
+      'удобно',
+      'рекомендую',
+      'нравится',
+      'люблю',
+      'отличный',
+      'прекрасный',
+      'замечательный',
+      'качественный',
+      'вкусный',
+      'быстрый',
+      'удобный',
+      'рекомендую',
+      'отличная',
+      'прекрасная',
+      'замечательная',
     ];
-    
+
     const negativeWords = [
-      'плохо', 'ужасно', 'некачественно', 'дорого', 'медленно', 'неудобно', 'не рекомендую',
-      'не нравится', 'ненавижу', 'плохой', 'ужасный', 'некачественный', 'дорогой', 'медленный',
-      'неудобный', 'плохая', 'ужасная', 'некачественная', 'дорогая', 'медленная', 'неудобная'
+      'плохо',
+      'ужасно',
+      'некачественно',
+      'дорого',
+      'медленно',
+      'неудобно',
+      'не рекомендую',
+      'не нравится',
+      'ненавижу',
+      'плохой',
+      'ужасный',
+      'некачественный',
+      'дорогой',
+      'медленный',
+      'неудобный',
+      'плохая',
+      'ужасная',
+      'некачественная',
+      'дорогая',
+      'медленная',
+      'неудобная',
     ];
-    
+
     const textLower = text.toLowerCase();
     let positiveCount = 0;
     let negativeCount = 0;
-    
-    positiveWords.forEach(word => {
+
+    positiveWords.forEach((word) => {
       const matches = (textLower.match(new RegExp(word, 'g')) || []).length;
       positiveCount += matches;
     });
-    
-    negativeWords.forEach(word => {
+
+    negativeWords.forEach((word) => {
       const matches = (textLower.match(new RegExp(word, 'g')) || []).length;
       negativeCount += matches;
     });
-    
+
     const totalWords = positiveCount + negativeCount;
     if (totalWords === 0) return 0;
-    
+
     return (positiveCount - negativeCount) / totalWords;
   }
 
@@ -730,22 +778,22 @@ export class SocialSentimentService {
     // Простой анализ тональности на основе ключевых слов
     const positiveWords = ['хорошо', 'отлично', 'прекрасно', 'замечательно', 'качественно'];
     const negativeWords = ['плохо', 'ужасно', 'некачественно', 'дорого', 'медленно'];
-    
+
     const keywordLower = keyword.toLowerCase();
-    
+
     for (const word of positiveWords) {
       if (keywordLower.includes(word)) return 0.3 + Math.random() * 0.4; // 0.3-0.7
     }
-    
+
     for (const word of negativeWords) {
       if (keywordLower.includes(word)) return -0.3 - Math.random() * 0.4; // -0.3 to -0.7
     }
-    
+
     return (Math.random() - 0.5) * 0.4; // -0.2 to 0.2
   }
 
   private getFallbackSentiment(keywords: string[]): SocialSentiment[] {
-    return keywords.map(keyword => ({
+    return keywords.map((keyword) => ({
       date: new Date().toISOString().split('T')[0],
       platform: 'news',
       sentiment: (Math.random() - 0.5) * 0.4,
@@ -779,14 +827,14 @@ export class ExternalDataService {
     this.economicService = new EconomicService(
       config.exchangeRateApiKey,
       config.alphaVantageApiKey,
-      config.fredApiKey
+      config.fredApiKey,
     );
     this.holidayService = new HolidayService(config.calendarificApiKey);
     this.socialSentimentService = new SocialSentimentService(
       config.newsApiKey || '',
-      config.twitterApiKey
+      config.twitterApiKey,
     );
-    
+
     if (config.googleMapsApiKey) {
       this.trafficService = new TrafficService(config.googleMapsApiKey);
     }
@@ -820,7 +868,10 @@ export class ExternalDataService {
     return result;
   }
 
-  async getEnhancedForecastData(location: { lat: number; lon: number; name: string }, days: number = 7): Promise<{
+  async getEnhancedForecastData(
+    location: { lat: number; lon: number; name: string },
+    days: number = 7,
+  ): Promise<{
     weather: WeatherAPIResponse[];
     economic: EconomicIndicator;
     holidays: HolidayData[];

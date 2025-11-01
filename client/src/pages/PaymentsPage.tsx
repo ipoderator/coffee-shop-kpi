@@ -29,7 +29,7 @@ const itemVariants = {
     y: 0,
     transition: {
       duration: 0.4,
-      ease: "easeOut",
+      ease: 'easeOut',
     },
   },
 };
@@ -41,7 +41,7 @@ export default function PaymentsPage({ analytics }: PaymentsPageProps) {
     let qr = 0;
     let sbp = 0;
 
-    analytics.transactions.forEach(t => {
+    analytics.transactions.forEach((t) => {
       cash += t.cashPayment || 0;
       terminal += t.terminalPayment || 0;
       qr += t.qrPayment || 0;
@@ -72,24 +72,14 @@ export default function PaymentsPage({ analytics }: PaymentsPageProps) {
       labels: ['Наличные', 'Терминал', 'QR-код', 'СБП'],
       datasets: [
         {
-          data: [
-            paymentStats.cash,
-            paymentStats.terminal,
-            paymentStats.qr,
-            paymentStats.sbp,
-          ],
+          data: [paymentStats.cash, paymentStats.terminal, paymentStats.qr, paymentStats.sbp],
           backgroundColor: [
             `hsl(${chart1} / 0.8)`,
             `hsl(${chart2} / 0.8)`,
             `hsl(${chart3} / 0.8)`,
             `hsl(${chart4} / 0.8)`,
           ],
-          borderColor: [
-            `hsl(${chart1})`,
-            `hsl(${chart2})`,
-            `hsl(${chart3})`,
-            `hsl(${chart4})`,
-          ],
+          borderColor: [`hsl(${chart1})`, `hsl(${chart2})`, `hsl(${chart3})`, `hsl(${chart4})`],
           borderWidth: 2,
         },
       ],
@@ -159,7 +149,7 @@ export default function PaymentsPage({ analytics }: PaymentsPageProps) {
   if (!paymentStats.hasData) {
     return (
       <div className="container mx-auto px-4 md:px-8 lg:px-12 py-8">
-        <motion.div 
+        <motion.div
           className="space-y-8"
           initial="hidden"
           animate="visible"
@@ -169,9 +159,7 @@ export default function PaymentsPage({ analytics }: PaymentsPageProps) {
             <h1 className="text-3xl font-bold bg-gradient-to-r from-primary via-foreground to-foreground/70 bg-clip-text text-transparent mb-2">
               Анализ платежей
             </h1>
-            <p className="text-muted-foreground">
-              Анализ способов оплаты и их распределение
-            </p>
+            <p className="text-muted-foreground">Анализ способов оплаты и их распределение</p>
           </motion.div>
           <motion.div variants={itemVariants}>
             <Card className="p-12">
@@ -179,8 +167,8 @@ export default function PaymentsPage({ analytics }: PaymentsPageProps) {
                 <div className="text-6xl">💳</div>
                 <h3 className="text-xl font-semibold">Данные о способах оплаты отсутствуют</h3>
                 <p className="text-muted-foreground max-w-md mx-auto">
-                  В загруженном файле не найдена информация о способах оплаты (наличные, терминал, QR, СБП).
-                  Загрузите файл с детализацией платежей для просмотра этой аналитики.
+                  В загруженном файле не найдена информация о способах оплаты (наличные, терминал,
+                  QR, СБП). Загрузите файл с детализацией платежей для просмотра этой аналитики.
                 </p>
               </div>
             </Card>
@@ -192,7 +180,7 @@ export default function PaymentsPage({ analytics }: PaymentsPageProps) {
 
   return (
     <div className="container mx-auto px-4 md:px-8 lg:px-12 py-8">
-      <motion.div 
+      <motion.div
         className="space-y-8"
         initial="hidden"
         animate="visible"
@@ -202,29 +190,29 @@ export default function PaymentsPage({ analytics }: PaymentsPageProps) {
           <h1 className="text-3xl font-bold bg-gradient-to-r from-primary via-foreground to-foreground/70 bg-clip-text text-transparent mb-2">
             Анализ платежей
           </h1>
-          <p className="text-muted-foreground">
-            Анализ способов оплаты и их распределение
-          </p>
+          <p className="text-muted-foreground">Анализ способов оплаты и их распределение</p>
         </motion.div>
 
         {/* Payment Method Cards */}
-        <motion.div 
+        <motion.div
           className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"
           variants={containerVariants}
         >
           {paymentMethods.map((method) => {
-            const percentage = paymentStats.total > 0 
-              ? ((method.value / paymentStats.total) * 100).toFixed(1) 
-              : '0.0';
-            
+            const percentage =
+              paymentStats.total > 0
+                ? ((method.value / paymentStats.total) * 100).toFixed(1)
+                : '0.0';
+
             return (
               <motion.div key={method.name} variants={itemVariants}>
-                <Card className="p-6 hover-elevate transition-all duration-300" data-testid={method.testId}>
+                <Card
+                  className="p-6 hover-elevate transition-all duration-300"
+                  data-testid={method.testId}
+                >
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
-                      <div className={`p-3 ${method.color}/10 rounded-lg`}>
-                        {method.icon}
-                      </div>
+                      <div className={`p-3 ${method.color}/10 rounded-lg`}>{method.icon}</div>
                       <div className={`px-3 py-1 ${method.color}/20 rounded-full`}>
                         <span className="font-semibold text-sm">{percentage}%</span>
                       </div>
@@ -250,10 +238,7 @@ export default function PaymentsPage({ analytics }: PaymentsPageProps) {
         </motion.div>
 
         {/* Chart and Stats */}
-        <motion.div 
-          className="grid grid-cols-1 lg:grid-cols-2 gap-6"
-          variants={containerVariants}
-        >
+        <motion.div className="grid grid-cols-1 lg:grid-cols-2 gap-6" variants={containerVariants}>
           {/* Pie Chart */}
           <motion.div variants={itemVariants}>
             <Card className="p-6">
@@ -286,8 +271,8 @@ export default function PaymentsPage({ analytics }: PaymentsPageProps) {
                     <p className="text-sm font-medium mb-3">Самый популярный способ</p>
                     <div className="flex items-center gap-3">
                       {(() => {
-                        const maxMethod = paymentMethods.reduce((max, method) => 
-                          method.value > max.value ? method : max
+                        const maxMethod = paymentMethods.reduce((max, method) =>
+                          method.value > max.value ? method : max,
                         );
                         return (
                           <>
@@ -297,7 +282,8 @@ export default function PaymentsPage({ analytics }: PaymentsPageProps) {
                             <div>
                               <p className="font-semibold">{maxMethod.name}</p>
                               <p className="text-sm text-muted-foreground">
-                                {((maxMethod.value / paymentStats.total) * 100).toFixed(1)}% от общей суммы
+                                {((maxMethod.value / paymentStats.total) * 100).toFixed(1)}% от
+                                общей суммы
                               </p>
                             </div>
                           </>
@@ -310,20 +296,25 @@ export default function PaymentsPage({ analytics }: PaymentsPageProps) {
                     <p className="text-sm font-medium mb-3">Средний чек по способам</p>
                     <div className="space-y-2">
                       {paymentMethods.map((method) => {
-                        const avgCheck = method.value > 0 
-                          ? method.value / analytics.transactions.filter(t => {
-                              if (method.name === 'Наличные') return (t.cashPayment || 0) > 0;
-                              if (method.name === 'Терминал') return (t.terminalPayment || 0) > 0;
-                              if (method.name === 'QR-код') return (t.qrPayment || 0) > 0;
-                              if (method.name === 'СБП') return (t.sbpPayment || 0) > 0;
-                              return false;
-                            }).length
-                          : 0;
-                        
+                        const avgCheck =
+                          method.value > 0
+                            ? method.value /
+                              analytics.transactions.filter((t) => {
+                                if (method.name === 'Наличные') return (t.cashPayment || 0) > 0;
+                                if (method.name === 'Терминал') return (t.terminalPayment || 0) > 0;
+                                if (method.name === 'QR-код') return (t.qrPayment || 0) > 0;
+                                if (method.name === 'СБП') return (t.sbpPayment || 0) > 0;
+                                return false;
+                              }).length
+                            : 0;
+
                         if (avgCheck === 0) return null;
-                        
+
                         return (
-                          <div key={method.name} className="flex justify-between items-center text-sm">
+                          <div
+                            key={method.name}
+                            className="flex justify-between items-center text-sm"
+                          >
                             <span className="text-muted-foreground">{method.name}</span>
                             <span className="font-semibold tabular-nums">
                               {new Intl.NumberFormat('ru-RU', {

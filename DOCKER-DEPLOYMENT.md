@@ -5,6 +5,7 @@
 ## 🚀 Быстрое развертывание
 
 ### Автоматическое развертывание
+
 ```bash
 # Клонируйте репозиторий
 git clone <repository-url>
@@ -15,6 +16,7 @@ cd coffee-shop-kpi-main
 ```
 
 ### Ручное развертывание
+
 ```bash
 # Сборка и запуск
 docker-compose up -d --build
@@ -79,6 +81,7 @@ CALENDARIFIC_API_KEY=your_api_key
 ## 🛠️ Полезные команды
 
 ### Управление контейнерами
+
 ```bash
 # Запуск
 docker-compose up -d
@@ -94,6 +97,7 @@ docker-compose up -d --build
 ```
 
 ### Логи и мониторинг
+
 ```bash
 # Просмотр логов приложения
 docker-compose logs -f app
@@ -109,6 +113,7 @@ docker stats
 ```
 
 ### Подключение к контейнерам
+
 ```bash
 # Подключение к приложению
 docker-compose exec app sh
@@ -118,6 +123,7 @@ docker-compose exec db psql -U coffee_user -d coffee_kpi
 ```
 
 ### Резервное копирование
+
 ```bash
 # Создание бэкапа базы данных
 docker-compose exec db pg_dump -U coffee_user coffee_kpi > backup.sql
@@ -129,6 +135,7 @@ docker-compose exec -T db psql -U coffee_user coffee_kpi < backup.sql
 ## 🔒 Безопасность
 
 ### Production настройки
+
 1. Измените пароли в `.env`
 2. Используйте сильные JWT секреты
 3. Настройте SSL/TLS
@@ -136,6 +143,7 @@ docker-compose exec -T db psql -U coffee_user coffee_kpi < backup.sql
 5. Регулярно обновляйте образы
 
 ### Firewall
+
 ```bash
 # Разрешить только необходимые порты
 sudo ufw allow 5000/tcp
@@ -146,6 +154,7 @@ sudo ufw enable
 ## 📈 Мониторинг
 
 ### Health Checks
+
 ```bash
 # Проверка здоровья приложения
 curl -f http://localhost:5000/ || echo "App is down"
@@ -155,6 +164,7 @@ docker-compose exec db pg_isready -U coffee_user
 ```
 
 ### Логи
+
 ```bash
 # Настройка ротации логов
 echo '{
@@ -169,6 +179,7 @@ echo '{
 ## 🚨 Troubleshooting
 
 ### Проблемы с портами
+
 ```bash
 # Проверка занятых портов
 lsof -i :5000
@@ -180,6 +191,7 @@ sudo fuser -k 5432/tcp
 ```
 
 ### Проблемы с памятью
+
 ```bash
 # Очистка Docker
 docker system prune -a
@@ -189,6 +201,7 @@ docker volume prune
 ```
 
 ### Проблемы с базой данных
+
 ```bash
 # Сброс базы данных
 docker-compose down -v
@@ -212,6 +225,7 @@ docker-compose up -d --build app
 ## 🔄 Автоматическое развертывание
 
 ### GitHub Actions
+
 ```yaml
 name: Deploy
 on:

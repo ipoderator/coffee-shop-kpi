@@ -2,7 +2,14 @@ import React from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
-import { AlertTriangle, TrendingUp, TrendingDown, Activity, Calendar, ExternalLink } from 'lucide-react';
+import {
+  AlertTriangle,
+  TrendingUp,
+  TrendingDown,
+  Activity,
+  Calendar,
+  ExternalLink,
+} from 'lucide-react';
 import type { Anomaly } from '@shared/schema';
 
 interface AnomaliesCardProps {
@@ -18,9 +25,7 @@ export function AnomaliesCard({ anomalies }: AnomaliesCardProps) {
             <AlertTriangle className="h-5 w-5" />
             Аномалии и отклонения
           </CardTitle>
-          <CardDescription>
-            Обнаруженные необычные паттерны в данных
-          </CardDescription>
+          <CardDescription>Обнаруженные необычные паттерны в данных</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="text-center py-8">
@@ -34,10 +39,10 @@ export function AnomaliesCard({ anomalies }: AnomaliesCardProps) {
     );
   }
 
-  const criticalAnomalies = anomalies.filter(a => a.severity === 'critical');
-  const highAnomalies = anomalies.filter(a => a.severity === 'high');
-  const mediumAnomalies = anomalies.filter(a => a.severity === 'medium');
-  const lowAnomalies = anomalies.filter(a => a.severity === 'low');
+  const criticalAnomalies = anomalies.filter((a) => a.severity === 'critical');
+  const highAnomalies = anomalies.filter((a) => a.severity === 'high');
+  const mediumAnomalies = anomalies.filter((a) => a.severity === 'medium');
+  const lowAnomalies = anomalies.filter((a) => a.severity === 'low');
 
   const getSeverityIcon = (severity: string) => {
     switch (severity) {
@@ -171,9 +176,7 @@ export function AnomaliesCard({ anomalies }: AnomaliesCardProps) {
           {anomalies.map((anomaly, index) => (
             <Alert key={anomaly.id} className="border-l-4 border-l-primary/20">
               <div className="flex items-start gap-3">
-                <div className="flex-shrink-0 mt-0.5">
-                  {getSeverityIcon(anomaly.severity)}
-                </div>
+                <div className="flex-shrink-0 mt-0.5">{getSeverityIcon(anomaly.severity)}</div>
                 <div className="flex-1 min-w-0">
                   <AlertTitle className="flex items-center gap-2 mb-2">
                     <span>{anomaly.description}</span>
@@ -185,38 +188,45 @@ export function AnomaliesCard({ anomalies }: AnomaliesCardProps) {
                       {getTypeLabel(anomaly.type)}
                     </Badge>
                   </AlertTitle>
-                  
+
                   <AlertDescription className="space-y-2">
                     <div className="text-sm">
                       <strong>Дата:</strong> {new Date(anomaly.date).toLocaleDateString('ru-RU')}
                     </div>
-                    
+
                     <div className="grid grid-cols-2 gap-4 text-sm">
                       <div>
                         <strong>Фактическое значение:</strong> {anomaly.value.toLocaleString()}
                       </div>
                       <div>
-                        <strong>Ожидаемое значение:</strong> {anomaly.expectedValue.toLocaleString()}
+                        <strong>Ожидаемое значение:</strong>{' '}
+                        {anomaly.expectedValue.toLocaleString()}
                       </div>
                     </div>
-                    
+
                     <div className="text-sm">
-                      <strong>Отклонение:</strong> 
-                      <span className={`ml-1 ${anomaly.deviation > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                        {anomaly.deviation > 0 ? '+' : ''}{(anomaly.deviation * 100).toFixed(1)}%
+                      <strong>Отклонение:</strong>
+                      <span
+                        className={`ml-1 ${anomaly.deviation > 0 ? 'text-green-600' : 'text-red-600'}`}
+                      >
+                        {anomaly.deviation > 0 ? '+' : ''}
+                        {(anomaly.deviation * 100).toFixed(1)}%
                       </span>
                     </div>
-                    
+
                     <div className="text-sm">
                       <strong>Влияние:</strong> {(anomaly.impact * 100).toFixed(1)}%
                     </div>
-                    
+
                     {anomaly.recommendations && anomaly.recommendations.length > 0 && (
                       <div>
                         <strong className="text-sm">Рекомендации:</strong>
                         <ul className="mt-1 space-y-1">
                           {anomaly.recommendations.map((recommendation, recIndex) => (
-                            <li key={recIndex} className="text-sm text-muted-foreground flex items-start gap-2">
+                            <li
+                              key={recIndex}
+                              className="text-sm text-muted-foreground flex items-start gap-2"
+                            >
                               <span className="text-primary mt-1">•</span>
                               <span>{recommendation}</span>
                             </li>

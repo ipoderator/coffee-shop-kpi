@@ -1,4 +1,4 @@
-declare module "node-cron" {
+declare module 'node-cron' {
   export interface ScheduleOptions {
     scheduled?: boolean;
     timezone?: string;
@@ -27,7 +27,7 @@ declare module "node-cron" {
   export default nodeCron;
 }
 
-declare module "speakeasy" {
+declare module 'speakeasy' {
   interface GenerateSecretOptions {
     length?: number;
     name?: string;
@@ -48,9 +48,7 @@ declare module "speakeasy" {
     window?: number;
   }
 
-  export function generateSecret(
-    options?: GenerateSecretOptions,
-  ): GenerateSecretResult;
+  export function generateSecret(options?: GenerateSecretOptions): GenerateSecretResult;
 
   export function otpauthURL(options: {
     secret: string;
@@ -74,11 +72,8 @@ declare module "speakeasy" {
   export default speakeasy;
 }
 
-declare module "qrcode" {
-  export function toDataURL(
-    text: string,
-    options?: Record<string, unknown>,
-  ): Promise<string>;
+declare module 'qrcode' {
+  export function toDataURL(text: string, options?: Record<string, unknown>): Promise<string>;
 
   const qrCode: {
     toDataURL: typeof toDataURL;

@@ -14,7 +14,11 @@ interface PasswordRequirement {
   icon: React.ReactNode;
 }
 
-export function PasswordStrengthMeter({ password, confirmPassword, className }: PasswordStrengthMeterProps) {
+export function PasswordStrengthMeter({
+  password,
+  confirmPassword,
+  className,
+}: PasswordStrengthMeterProps) {
   const requirements = useMemo((): PasswordRequirement[] => {
     const hasMinLength = password.length >= 8;
     const hasUppercase = /[A-Z]/.test(password);
@@ -27,28 +31,48 @@ export function PasswordStrengthMeter({ password, confirmPassword, className }: 
       {
         label: 'Минимум 8 символов',
         met: hasMinLength,
-        icon: hasMinLength ? <CheckCircle className="h-4 w-4 text-green-500" /> : <XCircle className="h-4 w-4 text-red-500" />
+        icon: hasMinLength ? (
+          <CheckCircle className="h-4 w-4 text-green-500" />
+        ) : (
+          <XCircle className="h-4 w-4 text-red-500" />
+        ),
       },
       {
         label: 'Заглавные буквы',
         met: hasUppercase,
-        icon: hasUppercase ? <CheckCircle className="h-4 w-4 text-green-500" /> : <XCircle className="h-4 w-4 text-red-500" />
+        icon: hasUppercase ? (
+          <CheckCircle className="h-4 w-4 text-green-500" />
+        ) : (
+          <XCircle className="h-4 w-4 text-red-500" />
+        ),
       },
       {
         label: 'Строчные буквы',
         met: hasLowercase,
-        icon: hasLowercase ? <CheckCircle className="h-4 w-4 text-green-500" /> : <XCircle className="h-4 w-4 text-red-500" />
+        icon: hasLowercase ? (
+          <CheckCircle className="h-4 w-4 text-green-500" />
+        ) : (
+          <XCircle className="h-4 w-4 text-red-500" />
+        ),
       },
       {
         label: 'Цифры',
         met: hasNumber,
-        icon: hasNumber ? <CheckCircle className="h-4 w-4 text-green-500" /> : <XCircle className="h-4 w-4 text-red-500" />
+        icon: hasNumber ? (
+          <CheckCircle className="h-4 w-4 text-green-500" />
+        ) : (
+          <XCircle className="h-4 w-4 text-red-500" />
+        ),
       },
       {
         label: 'Специальные символы',
         met: hasSpecialChar,
-        icon: hasSpecialChar ? <CheckCircle className="h-4 w-4 text-green-500" /> : <XCircle className="h-4 w-4 text-red-500" />
-      }
+        icon: hasSpecialChar ? (
+          <CheckCircle className="h-4 w-4 text-green-500" />
+        ) : (
+          <XCircle className="h-4 w-4 text-red-500" />
+        ),
+      },
     ];
 
     // Добавляем проверку совпадения паролей, если есть confirmPassword
@@ -56,7 +80,11 @@ export function PasswordStrengthMeter({ password, confirmPassword, className }: 
       baseRequirements.push({
         label: 'Пароли совпадают',
         met: passwordsMatch,
-        icon: passwordsMatch ? <CheckCircle className="h-4 w-4 text-green-500" /> : <XCircle className="h-4 w-4 text-red-500" />
+        icon: passwordsMatch ? (
+          <CheckCircle className="h-4 w-4 text-green-500" />
+        ) : (
+          <XCircle className="h-4 w-4 text-red-500" />
+        ),
       });
     }
 
@@ -64,7 +92,7 @@ export function PasswordStrengthMeter({ password, confirmPassword, className }: 
   }, [password, confirmPassword]);
 
   const strengthScore = useMemo(() => {
-    const metRequirements = requirements.filter(req => req.met).length;
+    const metRequirements = requirements.filter((req) => req.met).length;
     return (metRequirements / requirements.length) * 100;
   }, [requirements]);
 
@@ -92,12 +120,14 @@ export function PasswordStrengthMeter({ password, confirmPassword, className }: 
             {strengthLevel.level}
           </span>
         </div>
-        <Progress 
-          value={strengthScore} 
+        <Progress
+          value={strengthScore}
           className="h-2"
-          style={{
-            '--progress-background': strengthLevel.color
-          } as React.CSSProperties}
+          style={
+            {
+              '--progress-background': strengthLevel.color,
+            } as React.CSSProperties
+          }
         />
       </div>
 
@@ -108,7 +138,13 @@ export function PasswordStrengthMeter({ password, confirmPassword, className }: 
           {requirements.map((requirement, index) => (
             <div key={index} className="flex items-center space-x-2 text-sm">
               {requirement.icon}
-              <span className={requirement.met ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}>
+              <span
+                className={
+                  requirement.met
+                    ? 'text-green-700 dark:text-green-400'
+                    : 'text-red-700 dark:text-red-400'
+                }
+              >
                 {requirement.label}
               </span>
             </div>

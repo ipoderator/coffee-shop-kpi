@@ -1,10 +1,5 @@
 import type { Express } from 'express';
-import type {
-  AuthResponse,
-  ChangePasswordData,
-  LoginData,
-  RegisterData,
-} from '@shared/schema';
+import type { AuthResponse, ChangePasswordData, LoginData, RegisterData } from '@shared/schema';
 import { loginSchema, registerSchema, changePasswordSchema } from '@shared/schema';
 import {
   hashPassword,
@@ -138,8 +133,7 @@ export function registerAuthRoutes(app: Express): void {
       if (!isValidPassword) {
         recordFailedAttempt(ip, email);
         const failedAttempts = (user.failedLoginAttempts || 0) + 1;
-        const lockedUntil =
-          failedAttempts >= 5 ? new Date(Date.now() + 30 * 60 * 1000) : null;
+        const lockedUntil = failedAttempts >= 5 ? new Date(Date.now() + 30 * 60 * 1000) : null;
         const remainingAttempts = Math.max(0, 5 - failedAttempts);
 
         await storage.updateUserFailedAttempts(user.id, failedAttempts, lockedUntil ?? undefined);
@@ -149,12 +143,10 @@ export function registerAuthRoutes(app: Express): void {
           await logAccountLocked(user.id, ip, userAgent, 'too_many_failed_attempts');
         }
 
-        return res
-          .status(401)
-          .json({
-            success: false,
-            message: `Неверный пароль. Осталось попыток: ${remainingAttempts}`,
-          });
+        return res.status(401).json({
+          success: false,
+          message: `Неверный пароль. Осталось попыток: ${remainingAttempts}`,
+        });
       }
 
       if (user.twoFactorEnabled) {

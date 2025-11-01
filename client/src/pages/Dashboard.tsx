@@ -1,6 +1,14 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { TrendingUp, DollarSign, BarChart3, Upload, Wallet, FileText, Calendar } from 'lucide-react';
+import {
+  TrendingUp,
+  DollarSign,
+  BarChart3,
+  Upload,
+  Wallet,
+  FileText,
+  Calendar,
+} from 'lucide-react';
 import { FileUpload } from '@/components/FileUpload';
 import { KPICard } from '@/components/KPICard';
 import { PeriodTabs, PeriodType } from '@/components/PeriodTabs';
@@ -48,7 +56,7 @@ export default function Dashboard() {
         setUploadId(response.uploadId);
         // Invalidate specific upload analytics query
         queryClient.invalidateQueries({ queryKey: ['/api/analytics', response.uploadId] });
-        
+
         toast({
           title: 'Файл успешно загружен',
           description: `Обработано ${response.rowsProcessed} записей`,
@@ -71,7 +79,7 @@ export default function Dashboard() {
 
   const getPeriodData = () => {
     if (!analytics) return [];
-    
+
     switch (selectedPeriod) {
       case 'day':
         return analytics.daily || [];
@@ -107,11 +115,14 @@ export default function Dashboard() {
               <div className="p-2.5 bg-gradient-to-br from-primary to-primary/80 rounded-xl shadow-lg shadow-primary/20">
                 <BarChart3 className="w-6 h-6 text-primary-foreground" />
               </div>
-              <h1 className="text-2xl font-bold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent" data-testid="text-title">
+              <h1
+                className="text-2xl font-bold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent"
+                data-testid="text-title"
+              >
                 Coffee KPI Dashboard
               </h1>
             </div>
-            
+
             {uploadId && (
               <Button
                 onClick={handleNewUpload}
@@ -136,8 +147,8 @@ export default function Dashboard() {
                 Анализ показателей кофейни
               </h2>
               <p className="text-lg text-muted-foreground max-w-2xl mx-auto leading-relaxed">
-                Загрузите Excel, CSV или PDF файл с данными о продажах для получения детальной аналитики 
-                с KPI метриками, графиками и сравнением периодов
+                Загрузите Excel, CSV или PDF файл с данными о продажах для получения детальной
+                аналитики с KPI метриками, графиками и сравнением периодов
               </p>
             </div>
             <FileUpload onFileSelect={handleFileSelect} isProcessing={isUploading} />
@@ -192,7 +203,11 @@ export default function Dashboard() {
               <div className="h-[180px]">
                 <KPICard
                   title="Рост выручки (по дням)"
-                  value={analytics.kpi.revenueGrowthDoD !== undefined ? `${analytics.kpi.revenueGrowthDoD.toFixed(1)}%` : '—'}
+                  value={
+                    analytics.kpi.revenueGrowthDoD !== undefined
+                      ? `${analytics.kpi.revenueGrowthDoD.toFixed(1)}%`
+                      : '—'
+                  }
                   icon={<TrendingUp className="w-5 h-5" />}
                   format="number"
                   testId="card-growth-dod"
@@ -212,7 +227,11 @@ export default function Dashboard() {
               <div className="h-[180px]">
                 <KPICard
                   title="Среднее чеков/день (месяц)"
-                  value={analytics.kpi.currentMonthAvgChecksPerDay !== undefined ? analytics.kpi.currentMonthAvgChecksPerDay.toFixed(1) : '—'}
+                  value={
+                    analytics.kpi.currentMonthAvgChecksPerDay !== undefined
+                      ? analytics.kpi.currentMonthAvgChecksPerDay.toFixed(1)
+                      : '—'
+                  }
                   icon={<BarChart3 className="w-5 h-5" />}
                   format="number"
                   testId="card-avg-checks-per-day"
@@ -229,7 +248,7 @@ export default function Dashboard() {
                 </h2>
                 <PeriodTabs selected={selectedPeriod} onChange={setSelectedPeriod} />
               </div>
-              
+
               <RevenueChart
                 data={getPeriodData()}
                 title={getPeriodTitle()}
@@ -243,10 +262,7 @@ export default function Dashboard() {
                 <h2 className="text-2xl font-bold bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
                   Анализ по дням недели
                 </h2>
-                <DayOfWeekChart
-                  data={analytics.byDayOfWeek}
-                  title="Выручка по дням недели"
-                />
+                <DayOfWeekChart data={analytics.byDayOfWeek} title="Выручка по дням недели" />
               </div>
             )}
 

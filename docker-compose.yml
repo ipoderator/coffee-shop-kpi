@@ -11,7 +11,7 @@ services:
       dockerfile: Dockerfile
     container_name: coffee-kpi-app
     ports:
-      - "5000:5000"
+      - '5000:5000'
     environment:
       - NODE_ENV=production
       - DATABASE_URL=postgresql://coffee_user:coffee_password@db:5432/coffee_kpi
@@ -25,7 +25,7 @@ services:
     networks:
       - coffee-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      test: ['CMD', 'curl', '-f', 'http://localhost:5000/']
       interval: 30s
       timeout: 10s
       retries: 3
@@ -44,12 +44,12 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./sql:/docker-entrypoint-initdb.d
     ports:
-      - "5432:5432"
+      - '5432:5432'
     restart: unless-stopped
     networks:
       - coffee-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U coffee_user -d coffee_kpi"]
+      test: ['CMD-SHELL', 'pg_isready -U coffee_user -d coffee_kpi']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -60,8 +60,8 @@ services:
     image: nginx:alpine
     container_name: coffee-kpi-nginx
     ports:
-      - "80:80"
-      - "443:443"
+      - '80:80'
+      - '443:443'
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - ./ssl:/etc/nginx/ssl:ro
@@ -78,7 +78,7 @@ services:
     image: redis:7-alpine
     container_name: coffee-kpi-redis
     ports:
-      - "6379:6379"
+      - '6379:6379'
     volumes:
       - redis_data:/data
     restart: unless-stopped

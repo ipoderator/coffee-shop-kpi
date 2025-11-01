@@ -1,4 +1,14 @@
-import { BarChart3, TrendingUp, CreditCard, Database, Upload, Home, CalendarRange, Plug } from 'lucide-react';
+import {
+  BarChart3,
+  TrendingUp,
+  CreditCard,
+  Database,
+  Upload,
+  Home,
+  CalendarRange,
+  Plug,
+  LineChart,
+} from 'lucide-react';
 import { Link, useLocation } from 'wouter';
 import {
   Sidebar,
@@ -37,6 +47,12 @@ const menuItems = [
     url: '/sales',
     icon: TrendingUp,
     testId: 'link-sales',
+  },
+  {
+    title: 'Рентабельность',
+    url: '/profitability',
+    icon: LineChart,
+    testId: 'link-profitability',
   },
   {
     title: 'Анализ платежей',

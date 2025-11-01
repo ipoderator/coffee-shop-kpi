@@ -6,6 +6,7 @@
 **Primary References:** Linear's clean aesthetics, Stripe Dashboard's professional metrics display, Carbon Design System for data-heavy applications
 
 **Core Principles:**
+
 - Data clarity over decoration
 - Efficient information hierarchy
 - Professional business tool aesthetic
@@ -16,6 +17,7 @@
 ## Color Palette
 
 ### Dark Mode (Primary Interface)
+
 - **Background Base:** 222 15% 8% (deep charcoal)
 - **Surface Cards:** 222 15% 12% (elevated dark)
 - **Borders/Dividers:** 222 10% 18% (subtle contrast)
@@ -26,6 +28,7 @@
 - **Text Secondary:** 215 16% 65% (muted blue-gray)
 
 ### Light Mode (Alternative)
+
 - **Background:** 210 20% 98%
 - **Surface Cards:** 0 0% 100%
 - **Primary:** 198 93% 45%
@@ -35,11 +38,13 @@
 
 ## Typography
 
-**Font Stack:** 
+**Font Stack:**
+
 - Primary: 'Inter', system-ui, sans-serif (via Google Fonts)
 - Monospace: 'JetBrains Mono', monospace (for data/numbers)
 
 **Hierarchy:**
+
 - **Dashboard Title:** text-2xl font-bold tracking-tight
 - **Section Headers:** text-lg font-semibold
 - **KPI Values:** text-3xl md:text-4xl font-bold font-mono (tabular nums)
@@ -53,11 +58,13 @@
 ## Layout System
 
 **Spacing Primitives:** Consistent use of Tailwind units: 2, 4, 6, 8, 12, 16
+
 - Component padding: p-4 to p-6
 - Section gaps: gap-4 to gap-6
 - Page margins: px-4 md:px-8 lg:px-12
 
 **Grid Structure:**
+
 - Container: max-w-7xl mx-auto
 - KPI Cards: grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4
 - Charts: grid-cols-1 lg:grid-cols-2 gap-6
@@ -68,12 +75,14 @@
 ## Component Library
 
 ### 1. Dashboard Header
+
 - Dark background with subtle border-bottom
 - Title (Coffee KPI Dashboard) + date range selector
 - Upload button (primary cyan) in top-right
 - Height: h-16, sticky positioning
 
 ### 2. File Upload Zone
+
 - Large dashed border card (border-dashed border-2)
 - Upload icon (cloud upload) centered
 - "Drag & drop or click to upload" text
@@ -81,6 +90,7 @@
 - Active state: border-primary bg-primary/5
 
 ### 3. KPI Cards
+
 - Elevated card with rounded corners (rounded-lg)
 - Icon top-left (Heroicons: trending up/down, currency, receipt)
 - Large numeric value (font-mono for tabular alignment)
@@ -90,6 +100,7 @@
 - Subtle shadow: shadow-sm hover:shadow-md transition
 
 ### 4. Chart Containers
+
 - White/dark card backgrounds
 - Title with time period selector (Day/Month/Year tabs)
 - Chart.js canvas with responsive sizing
@@ -98,6 +109,7 @@
 - Tooltips: dark bg with rounded corners
 
 ### 5. Data Table
+
 - Striped rows (alternate bg colors)
 - Sticky header with sort indicators
 - Monospace font for numeric columns
@@ -106,12 +118,14 @@
 - Pagination controls at bottom
 
 ### 6. Navigation/Tabs
+
 - Segmented control style for time periods
 - Active tab: bg-primary text-white
 - Inactive: text-secondary hover:bg-surface
 - Rounded full group: rounded-full p-1
 
 ### 7. Buttons
+
 - Primary: bg-primary hover:bg-primary-dark rounded-lg px-4 py-2
 - Secondary: border border-primary text-primary hover:bg-primary/10
 - Icon buttons: square aspect, rounded-md, p-2
@@ -121,6 +135,7 @@
 ## Data Visualization Specs
 
 **Chart.js Configuration:**
+
 - Color scheme: Primary cyan for main data, gradient fills with opacity
 - Grid: color matching border colors, 0.1 opacity
 - Font family: Inter for labels, JetBrains Mono for values
@@ -129,6 +144,7 @@
 - Line charts: 2px stroke, smooth curves, point radius: 4
 
 **Growth Indicators:**
+
 - Upward trend: ↑ text-success (green)
 - Downward trend: ↓ text-warning (red)
 - Neutral: — text-secondary (gray)
@@ -157,6 +173,7 @@
 ## Icons
 
 **Library:** Heroicons (via CDN)
+
 - Upload: cloud-arrow-up
 - Revenue: currency-dollar
 - Checks: receipt-percent

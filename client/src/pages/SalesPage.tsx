@@ -28,7 +28,7 @@ const itemVariants = {
     y: 0,
     transition: {
       duration: 0.4,
-      ease: "easeOut",
+      ease: 'easeOut',
     },
   },
 };
@@ -64,35 +64,35 @@ export default function SalesPage({ analytics }: SalesPageProps) {
 
   const periodData = getPeriodData();
   const hasTrend = periodData.length >= 2;
-  
+
   const calculateTrend = () => {
     // For monthly period, use the corrected MoM growth from KPI which compares same periods
     if (selectedPeriod === 'month') {
       const change = analytics.kpi.revenueGrowth;
-      
+
       // Validate that the growth value is usable
       if (change === undefined || change === null || !isFinite(change)) {
         return null;
       }
-      
+
       return { change, isPositive: change >= 0 };
     }
-    
+
     // For daily and yearly periods, compare last two periods
     if (!hasTrend) return null;
     const latest = periodData[periodData.length - 1];
     const previous = periodData[periodData.length - 2];
-    
+
     if (!previous.revenue || previous.revenue === 0 || !isFinite(previous.revenue)) {
       return null;
     }
-    
+
     const change = ((latest.revenue - previous.revenue) / previous.revenue) * 100;
-    
+
     if (!isFinite(change)) {
       return null;
     }
-    
+
     return { change, isPositive: change >= 0 };
   };
 
@@ -100,7 +100,7 @@ export default function SalesPage({ analytics }: SalesPageProps) {
 
   return (
     <div className="container mx-auto px-4 md:px-8 lg:px-12 py-8">
-      <motion.div 
+      <motion.div
         className="space-y-8"
         initial="hidden"
         animate="visible"
@@ -116,7 +116,7 @@ export default function SalesPage({ analytics }: SalesPageProps) {
         </motion.div>
 
         {/* Period Selector */}
-        <motion.div 
+        <motion.div
           className="flex items-center justify-between flex-wrap gap-4"
           variants={itemVariants}
         >
@@ -126,12 +126,18 @@ export default function SalesPage({ analytics }: SalesPageProps) {
               <motion.div
                 initial={{ scale: 0 }}
                 animate={{ scale: 1 }}
-                transition={{ delay: 0.3, type: "spring" }}
+                transition={{ delay: 0.3, type: 'spring' }}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg ${
-                  trend.isPositive ? 'bg-chart-2/10 text-chart-2' : 'bg-destructive/10 text-destructive'
+                  trend.isPositive
+                    ? 'bg-chart-2/10 text-chart-2'
+                    : 'bg-destructive/10 text-destructive'
                 }`}
               >
-                {trend.isPositive ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+                {trend.isPositive ? (
+                  <TrendingUp className="w-4 h-4" />
+                ) : (
+                  <TrendingDown className="w-4 h-4" />
+                )}
                 <span className="font-semibold text-sm">{Math.abs(trend.change).toFixed(1)}%</span>
               </motion.div>
             )}
@@ -141,16 +147,12 @@ export default function SalesPage({ analytics }: SalesPageProps) {
 
         {/* Main Revenue Chart */}
         <motion.div variants={itemVariants}>
-          <RevenueChart
-            data={periodData}
-            title={getPeriodTitle()}
-            periodType={selectedPeriod}
-          />
+          <RevenueChart data={periodData} title={getPeriodTitle()} periodType={selectedPeriod} />
         </motion.div>
 
         {/* Statistics Grid */}
         {periodData.length > 0 && (
-          <motion.div 
+          <motion.div
             className="grid grid-cols-1 md:grid-cols-3 gap-4"
             variants={containerVariants}
           >
@@ -162,12 +164,16 @@ export default function SalesPage({ analytics }: SalesPageProps) {
                   currency: 'RUB',
                   minimumFractionDigits: 0,
                   maximumFractionDigits: 0,
-                }).format(Math.max(...periodData.map(d => d.revenue)))}
-                subtitle={periodData.find(d => d.revenue === Math.max(...periodData.map(p => p.revenue)))?.period}
+                }).format(Math.max(...periodData.map((d) => d.revenue)))}
+                subtitle={
+                  periodData.find(
+                    (d) => d.revenue === Math.max(...periodData.map((p) => p.revenue)),
+                  )?.period
+                }
                 icon={<TrendingUp className="w-5 h-5 text-chart-2" />}
                 progress={{
-                  value: Math.max(...periodData.map(d => d.revenue)),
-                  max: Math.max(...periodData.map(d => d.revenue)),
+                  value: Math.max(...periodData.map((d) => d.revenue)),
+                  max: Math.max(...periodData.map((d) => d.revenue)),
                   color: 'chart-2',
                 }}
                 testId="stat-max-revenue"
@@ -182,12 +188,16 @@ export default function SalesPage({ analytics }: SalesPageProps) {
                   currency: 'RUB',
                   minimumFractionDigits: 0,
                   maximumFractionDigits: 0,
-                }).format(Math.min(...periodData.map(d => d.revenue)))}
-                subtitle={periodData.find(d => d.revenue === Math.min(...periodData.map(p => p.revenue)))?.period}
+                }).format(Math.min(...periodData.map((d) => d.revenue)))}
+                subtitle={
+                  periodData.find(
+                    (d) => d.revenue === Math.min(...periodData.map((p) => p.revenue)),
+                  )?.period
+                }
                 icon={<TrendingDown className="w-5 h-5 text-destructive" />}
                 progress={{
-                  value: Math.min(...periodData.map(d => d.revenue)),
-                  max: Math.max(...periodData.map(d => d.revenue)),
+                  value: Math.min(...periodData.map((d) => d.revenue)),
+                  max: Math.max(...periodData.map((d) => d.revenue)),
                   color: 'destructive',
                 }}
                 testId="stat-min-revenue"
@@ -207,7 +217,7 @@ export default function SalesPage({ analytics }: SalesPageProps) {
                 icon={<Target className="w-5 h-5 text-primary" />}
                 progress={{
                   value: periodData.reduce((sum, d) => sum + d.revenue, 0) / periodData.length,
-                  max: Math.max(...periodData.map(d => d.revenue)),
+                  max: Math.max(...periodData.map((d) => d.revenue)),
                   color: 'primary',
                 }}
                 testId="stat-avg-revenue"
@@ -226,7 +236,9 @@ export default function SalesPage({ analytics }: SalesPageProps) {
               <div className="space-y-4">
                 <h3 className="font-semibold text-lg">Общее количество чеков</h3>
                 <p className="text-3xl font-bold tabular-nums">
-                  {new Intl.NumberFormat('ru-RU').format(periodData.reduce((sum, d) => sum + d.checks, 0))}
+                  {new Intl.NumberFormat('ru-RU').format(
+                    periodData.reduce((sum, d) => sum + d.checks, 0),
+                  )}
                 </p>
                 <div className="pt-2 border-t">
                   <div className="flex justify-between text-sm">
@@ -238,8 +250,8 @@ export default function SalesPage({ analytics }: SalesPageProps) {
                         minimumFractionDigits: 0,
                         maximumFractionDigits: 0,
                       }).format(
-                        periodData.reduce((sum, d) => sum + d.revenue, 0) / 
-                        periodData.reduce((sum, d) => sum + d.checks, 0)
+                        periodData.reduce((sum, d) => sum + d.revenue, 0) /
+                          periodData.reduce((sum, d) => sum + d.checks, 0),
                       )}
                     </span>
                   </div>
@@ -254,7 +266,9 @@ export default function SalesPage({ analytics }: SalesPageProps) {
                   <div className="flex justify-between items-center">
                     <span className="text-sm text-muted-foreground">Чеков за период</span>
                     <span className="font-semibold tabular-nums">
-                      {(periodData.reduce((sum, d) => sum + d.checks, 0) / periodData.length).toFixed(0)}
+                      {(
+                        periodData.reduce((sum, d) => sum + d.checks, 0) / periodData.length
+                      ).toFixed(0)}
                     </span>
                   </div>
                   <div className="flex justify-between items-center">
@@ -265,7 +279,7 @@ export default function SalesPage({ analytics }: SalesPageProps) {
                         currency: 'RUB',
                         minimumFractionDigits: 0,
                         maximumFractionDigits: 0,
-                      }).format(Math.max(...periodData.map(d => d.averageCheck)))}
+                      }).format(Math.max(...periodData.map((d) => d.averageCheck)))}
                     </span>
                   </div>
                   <div className="flex justify-between items-center">
@@ -276,7 +290,7 @@ export default function SalesPage({ analytics }: SalesPageProps) {
                         currency: 'RUB',
                         minimumFractionDigits: 0,
                         maximumFractionDigits: 0,
-                      }).format(Math.min(...periodData.map(d => d.averageCheck)))}
+                      }).format(Math.min(...periodData.map((d) => d.averageCheck)))}
                     </span>
                   </div>
                 </div>

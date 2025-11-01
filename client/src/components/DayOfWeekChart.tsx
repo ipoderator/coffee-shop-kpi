@@ -13,14 +13,7 @@ import { Bar } from 'react-chartjs-2';
 import { Card } from '@/components/ui/card';
 import { DayOfWeekData } from '@shared/schema';
 
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  Title,
-  Tooltip,
-  Legend
-);
+ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
 interface DayOfWeekChartProps {
   data: DayOfWeekData[];
@@ -29,8 +22,8 @@ interface DayOfWeekChartProps {
 
 export function DayOfWeekChart({ data, title = 'Выручка по дням недели' }: DayOfWeekChartProps) {
   const chartData = useMemo(() => {
-    const labels = data.map(d => d.dayName);
-    
+    const labels = data.map((d) => d.dayName);
+
     // Get computed colors from CSS variables
     const style = getComputedStyle(document.documentElement);
     const chartColor2 = style.getPropertyValue('--chart-2').trim();
@@ -38,29 +31,29 @@ export function DayOfWeekChart({ data, title = 'Выручка по дням н�
     const chartColor1 = style.getPropertyValue('--chart-1').trim();
 
     // Find min and max revenue
-    const revenues = data.map(d => d.revenue);
+    const revenues = data.map((d) => d.revenue);
     const maxRevenue = Math.max(...revenues);
     const minRevenue = Math.min(...revenues);
-    
+
     // Find first index with max and min values
-    const maxIndex = data.findIndex(d => d.revenue === maxRevenue);
-    const minIndex = data.findIndex(d => d.revenue === minRevenue);
+    const maxIndex = data.findIndex((d) => d.revenue === maxRevenue);
+    const minIndex = data.findIndex((d) => d.revenue === minRevenue);
 
     // Single scriptable backgroundColor function for all bars
     const backgroundColor = (context: any) => {
       const index = context.dataIndex;
       const chart = context.chart;
-      const {ctx, chartArea} = chart;
-      
+      const { ctx, chartArea } = chart;
+
       if (!chartArea) {
         // Fallback colors
         if (index === maxIndex) return `hsl(${chartColor2} / 0.8)`;
         if (index === minIndex && maxIndex !== minIndex) return `hsl(${destructiveColor} / 0.8)`;
         return `hsl(${chartColor1} / 0.8)`;
       }
-      
+
       const gradient = ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
-      
+
       if (index === maxIndex) {
         gradient.addColorStop(0, `hsl(${chartColor2} / 0.9)`);
         gradient.addColorStop(1, `hsl(${chartColor2} / 0.6)`);
@@ -71,7 +64,7 @@ export function DayOfWeekChart({ data, title = 'Выручка по дням н�
         gradient.addColorStop(0, `hsl(${chartColor1} / 0.7)`);
         gradient.addColorStop(1, `hsl(${chartColor1} / 0.4)`);
       }
-      
+
       return gradient;
     };
 
@@ -94,7 +87,7 @@ export function DayOfWeekChart({ data, title = 'Выручка по дням н�
       datasets: [
         {
           label: 'Выручка',
-          data: data.map(d => d.revenue),
+          data: data.map((d) => d.revenue),
           backgroundColor: backgroundColor,
           borderColor: borderColor,
           borderWidth: 2,
@@ -132,13 +125,13 @@ export function DayOfWeekChart({ data, title = 'Выручка по дням н�
           weight: 'bold',
         },
         callbacks: {
-          title: function(context) {
+          title: function (context) {
             return context[0].label;
           },
-          label: function(context) {
+          label: function (context) {
             const dataIndex = context.dataIndex;
             const dayData = data[dataIndex];
-            
+
             const revenue = new Intl.NumberFormat('ru-RU', {
               style: 'currency',
               currency: 'RUB',
@@ -146,7 +139,7 @@ export function DayOfWeekChart({ data, title = 'Выручка по дням н�
             }).format(dayData.revenue);
 
             const checks = new Intl.NumberFormat('ru-RU').format(dayData.checks);
-            
+
             const avgCheck = new Intl.NumberFormat('ru-RU', {
               style: 'currency',
               currency: 'RUB',
@@ -179,7 +172,7 @@ export function DayOfWeekChart({ data, title = 'Выручка по дням н�
             weight: 'bold',
           },
           padding: 10,
-          callback: function(value) {
+          callback: function (value) {
             if (typeof value === 'number') {
               return new Intl.NumberFormat('ru-RU', {
                 notation: 'compact',
@@ -210,10 +203,13 @@ export function DayOfWeekChart({ data, title = 'Выручка по дням н�
   };
 
   return (
-    <Card className="relative p-6 shadow-lg border-border/50 overflow-hidden" data-testid="card-day-of-week-chart">
+    <Card
+      className="relative p-6 shadow-lg border-border/50 overflow-hidden"
+      data-testid="card-day-of-week-chart"
+    >
       {/* Enhanced gradient overlay */}
       <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-primary/3 to-transparent" />
-      
+
       {/* Content */}
       <div className="relative z-10">
         <div className="mb-6">

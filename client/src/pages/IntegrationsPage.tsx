@@ -1,5 +1,5 @@
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import UploadTrainingDataButton from "@/components/UploadTrainingDataButton";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import UploadTrainingDataButton from '@/components/UploadTrainingDataButton';
 
 export default function IntegrationsPage() {
   return (
@@ -8,13 +8,15 @@ export default function IntegrationsPage() {
         <CardHeader>
           <CardTitle>Интеграции</CardTitle>
           <CardDescription>
-            Загрузите Excel-файл с историей продаж, чтобы пересчитать ML-модель выручки напрямую из интеграционного сервиса.
+            Загрузите Excel-файл с историей продаж, чтобы пересчитать ML-модель выручки напрямую из
+            интеграционного сервиса.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground leading-relaxed">
-            После загрузки файл попадет в серверную папку интеграций, будет запущен скрипт обучения и обновится{" "}
-            <span className="font-medium text-primary">salesModel.json</span>. Проверьте логи сервера, чтобы убедиться, что обучение прошло успешно.
+            После загрузки файл попадет в серверную папку интеграций, будет запущен скрипт обучения
+            и обновится <span className="font-medium text-primary">salesModel.json</span>. Проверьте
+            логи сервера, чтобы убедиться, что обучение прошло успешно.
           </p>
         </CardContent>
       </Card>
@@ -23,4 +25,3 @@ export default function IntegrationsPage() {
     </div>
   );
 }
-

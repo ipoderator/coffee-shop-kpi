@@ -21,12 +21,14 @@ psql --version    # должно быть 14.0 или выше
 ## Шаг 1: Установка PostgreSQL
 
 ### Windows
+
 1. Скачайте PostgreSQL с [официального сайта](https://www.postgresql.org/download/windows/)
 2. Запустите установщик
 3. Запомните пароль для пользователя `postgres`
 4. По умолчанию PostgreSQL запустится на порту `5432`
 
 ### macOS
+
 ```bash
 # Установка через Homebrew
 brew install postgresql@14
@@ -34,6 +36,7 @@ brew services start postgresql@14
 ```
 
 ### Linux (Ubuntu/Debian)
+
 ```bash
 sudo apt update
 sudo apt install postgresql postgresql-contrib
@@ -94,6 +97,7 @@ DATABASE_URL=postgresql://postgres:ВАШ_ПАРОЛЬ@localhost:5432/coffee_kpi
 Замените `ВАШ_ПАРОЛЬ` на пароль, который вы установили для PostgreSQL.
 
 **Пример:**
+
 ```env
 DATABASE_URL=postgresql://postgres:mypassword123@localhost:5432/coffee_kpi
 ```
@@ -117,6 +121,7 @@ npm run dev
 ```
 
 Вы увидите сообщение:
+
 ```
 serving on port 5000
 ```
@@ -136,14 +141,17 @@ http://localhost:5000
 ### Ошибка: "PORT 5000 уже используется"
 
 **Решение:**
+
 1. Найдите процесс, использующий порт 5000:
+
    ```bash
    # Windows
    netstat -ano | findstr :5000
-   
+
    # macOS/Linux
    lsof -i :5000
    ```
+
 2. Остановите процесс или измените порт в `.env`:
    ```env
    PORT=3000
@@ -152,23 +160,27 @@ http://localhost:5000
 ### Ошибка: "Cannot connect to database"
 
 **Решение:**
+
 1. Проверьте, что PostgreSQL запущен:
+
    ```bash
    # Windows
    services.msc  # найдите postgresql-x64-14
-   
+
    # macOS
    brew services list
-   
+
    # Linux
    sudo systemctl status postgresql
    ```
+
 2. Проверьте правильность `DATABASE_URL` в `.env`
 3. Проверьте, что база данных создана: `psql -U postgres -l`
 
 ### Ошибка: "Module not found"
 
 **Решение:**
+
 1. Удалите папки `node_modules` и файл `package-lock.json`
 2. Переустановите зависимости:
    ```bash
@@ -178,6 +190,7 @@ http://localhost:5000
 ### Ошибка: "tsx: not found" или "Command not found"
 
 **Решение:**
+
 1. Убедитесь, что установка npm завершилась успешно
 2. Попробуйте переустановить зависимости:
    ```bash

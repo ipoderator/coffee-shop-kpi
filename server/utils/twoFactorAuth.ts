@@ -69,29 +69,29 @@ export function verifyBackupCode(usedCodes: string[], code: string): boolean {
  */
 export function requireTwoFactor(req: any, res: any, next: any) {
   const user = req.user;
-  
+
   if (!user) {
     return res.status(401).json({
       success: false,
-      message: 'Пользователь не авторизован'
+      message: 'Пользователь не авторизован',
     });
   }
-  
+
   // Если 2FA не включена, пропускаем
   if (!user.twoFactorEnabled) {
     return next();
   }
-  
+
   const twoFactorToken = req.headers['x-two-factor-token'] as string;
-  
+
   if (!twoFactorToken) {
     return res.status(400).json({
       success: false,
       message: 'Требуется код двухфакторной аутентификации',
-      requiresTwoFactor: true
+      requiresTwoFactor: true,
     });
   }
-  
+
   const secret = user.twoFactorSecret as string | undefined;
 
   const isValid = secret ? verifyTwoFactorToken(secret, twoFactorToken) : false;
@@ -100,7 +100,7 @@ export function requireTwoFactor(req: any, res: any, next: any) {
     return res.status(400).json({
       success: false,
       message: 'Неверный код двухфакторной аутентификации',
-      requiresTwoFactor: true
+      requiresTwoFactor: true,
     });
   }
 

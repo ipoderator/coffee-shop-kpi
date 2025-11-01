@@ -2,20 +2,20 @@ import React, { useState, useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
-import { 
-  TrendingUp, 
-  TrendingDown, 
-  Minus, 
-  Calendar, 
-  BarChart3, 
-  Target, 
-  Cloud, 
-  Sun, 
-  CloudRain, 
-  Snowflake, 
-  Wind, 
-  Gift, 
-  Clock, 
+import {
+  TrendingUp,
+  TrendingDown,
+  Minus,
+  Calendar,
+  BarChart3,
+  Target,
+  Cloud,
+  Sun,
+  CloudRain,
+  Snowflake,
+  Wind,
+  Gift,
+  Clock,
   CalendarDays,
   Brain,
   Activity,
@@ -25,7 +25,7 @@ import {
   CheckCircle,
   ArrowRight,
   ArrowLeft,
-  RefreshCw
+  RefreshCw,
 } from 'lucide-react';
 import { RevenueForecast } from '@shared/schema';
 import { Line } from 'react-chartjs-2';
@@ -50,7 +50,7 @@ ChartJS.register(
   Title,
   Tooltip,
   Legend,
-  Filler
+  Filler,
 );
 
 interface EnhancedWeeklyForecastCardProps {
@@ -61,7 +61,7 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
   const { nextMonth, methodology } = forecast;
   const [activeTab, setActiveTab] = useState<'forecast' | 'analytics' | 'insights'>('forecast');
   const [selectedWeek, setSelectedWeek] = useState(0);
-  
+
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('ru-RU', {
       style: 'currency',
@@ -78,22 +78,25 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
       const week = nextMonth.dailyForecast.slice(i, i + 7);
       const weekRevenue = week.reduce((sum, day) => sum + day.predictedRevenue, 0);
       const avgConfidence = week.reduce((sum, day) => sum + day.confidence, 0) / week.length;
-      
+
       // Анализ трендов внутри недели
-      const dailyRevenues = week.map(day => day.predictedRevenue);
-      const trend = dailyRevenues.length > 1 ? 
-        (dailyRevenues[dailyRevenues.length - 1] - dailyRevenues[0]) / dailyRevenues[0] : 0;
-      
+      const dailyRevenues = week.map((day) => day.predictedRevenue);
+      const trend =
+        dailyRevenues.length > 1
+          ? (dailyRevenues[dailyRevenues.length - 1] - dailyRevenues[0]) / dailyRevenues[0]
+          : 0;
+
       // Анализ волатильности
-      const variance = dailyRevenues.reduce((sum, rev) => {
-        return sum + Math.pow(rev - weekRevenue / 7, 2);
-      }, 0) / dailyRevenues.length;
+      const variance =
+        dailyRevenues.reduce((sum, rev) => {
+          return sum + Math.pow(rev - weekRevenue / 7, 2);
+        }, 0) / dailyRevenues.length;
       const volatility = Math.sqrt(variance) / (weekRevenue / 7);
-      
+
       // Анализ факторов влияния
       const weatherImpact = week.reduce((sum, day) => sum + (day.weatherImpact || 0), 0) / 7;
       const holidayImpact = week.reduce((sum, day) => sum + (day.holidayImpact || 0), 0) / 7;
-      
+
       weeks.push({
         week: Math.floor(i / 7) + 1,
         revenue: weekRevenue,
@@ -104,7 +107,7 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
         weatherImpact,
         holidayImpact,
         startDate: week[0]?.date,
-        endDate: week[week.length - 1]?.date
+        endDate: week[week.length - 1]?.date,
       });
     }
     return weeks;
@@ -113,53 +116,65 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
   // Глубокий анализ данных с ML инсайтами
   const deepAnalytics = useMemo(() => {
     const allDays = nextMonth.dailyForecast;
-    
+
     // Анализ сезонности по дням недели
-    const dayOfWeekAnalysis = [0, 1, 2, 3, 4, 5, 6].map(dayIndex => {
-      const dayData = allDays.filter(day => new Date(day.date).getDay() === dayIndex);
-      const avgRevenue = dayData.reduce((sum, day) => sum + day.predictedRevenue, 0) / dayData.length;
+    const dayOfWeekAnalysis = [0, 1, 2, 3, 4, 5, 6].map((dayIndex) => {
+      const dayData = allDays.filter((day) => new Date(day.date).getDay() === dayIndex);
+      const avgRevenue =
+        dayData.reduce((sum, day) => sum + day.predictedRevenue, 0) / dayData.length;
       const avgConfidence = dayData.reduce((sum, day) => sum + day.confidence, 0) / dayData.length;
-      
+
       return {
         dayIndex,
         dayName: ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'][dayIndex],
         avgRevenue,
         avgConfidence,
-        count: dayData.length
+        count: dayData.length,
       };
     });
 
     // Анализ корреляций с ML факторами
     const correlations = {
-      weatherRevenue: allDays.reduce((sum, day) => {
-        return sum + ((day.weatherImpact || 0) * day.predictedRevenue);
-      }, 0) / allDays.length,
-      holidayRevenue: allDays.reduce((sum, day) => {
-        return sum + ((day.holidayImpact || 0) * day.predictedRevenue);
-      }, 0) / allDays.length,
-      seasonalRevenue: allDays.reduce((sum, day) => {
-        return sum + ((day.factors?.seasonality || 1) * day.predictedRevenue);
-      }, 0) / allDays.length,
-      trendRevenue: allDays.reduce((sum, day) => {
-        return sum + ((day.factors?.trend || 0) * day.predictedRevenue);
-      }, 0) / allDays.length
+      weatherRevenue:
+        allDays.reduce((sum, day) => {
+          return sum + (day.weatherImpact || 0) * day.predictedRevenue;
+        }, 0) / allDays.length,
+      holidayRevenue:
+        allDays.reduce((sum, day) => {
+          return sum + (day.holidayImpact || 0) * day.predictedRevenue;
+        }, 0) / allDays.length,
+      seasonalRevenue:
+        allDays.reduce((sum, day) => {
+          return sum + (day.factors?.seasonality || 1) * day.predictedRevenue;
+        }, 0) / allDays.length,
+      trendRevenue:
+        allDays.reduce((sum, day) => {
+          return sum + (day.factors?.trend || 0) * day.predictedRevenue;
+        }, 0) / allDays.length,
     };
 
     // Анализ трендов с ML
-    const revenueTrend = allDays.map(day => day.predictedRevenue);
-    const trendSlope = revenueTrend.length > 1 ? 
-      (revenueTrend[revenueTrend.length - 1] - revenueTrend[0]) / revenueTrend.length : 0;
+    const revenueTrend = allDays.map((day) => day.predictedRevenue);
+    const trendSlope =
+      revenueTrend.length > 1
+        ? (revenueTrend[revenueTrend.length - 1] - revenueTrend[0]) / revenueTrend.length
+        : 0;
 
     // Анализ волатильности
     const avgRevenue = revenueTrend.reduce((sum, rev) => sum + rev, 0) / revenueTrend.length;
-    const variance = revenueTrend.reduce((sum, rev) => sum + Math.pow(rev - avgRevenue, 2), 0) / revenueTrend.length;
+    const variance =
+      revenueTrend.reduce((sum, rev) => sum + Math.pow(rev - avgRevenue, 2), 0) /
+      revenueTrend.length;
     const volatility = Math.sqrt(variance) / avgRevenue;
 
     // Анализ качества ML моделей
     const mlModelQuality = {
-      arima: allDays.reduce((sum, day) => sum + (day.factors?.historicalPattern || 0), 0) / allDays.length,
-      prophet: allDays.reduce((sum, day) => sum + (day.factors?.seasonality || 1), 0) / allDays.length,
-      lstm: allDays.reduce((sum, day) => sum + (day.factors?.trend || 0), 0) / allDays.length
+      arima:
+        allDays.reduce((sum, day) => sum + (day.factors?.historicalPattern || 0), 0) /
+        allDays.length,
+      prophet:
+        allDays.reduce((sum, day) => sum + (day.factors?.seasonality || 1), 0) / allDays.length,
+      lstm: allDays.reduce((sum, day) => sum + (day.factors?.trend || 0), 0) / allDays.length,
     };
 
     return {
@@ -169,29 +184,29 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
       volatility,
       avgRevenue,
       totalDays: allDays.length,
-      mlModelQuality
+      mlModelQuality,
     };
   }, [nextMonth.dailyForecast]);
 
   // Генерация инсайтов
   const insights = useMemo(() => {
     const insightsList = [];
-    
+
     // Инсайт по дням недели
-    const bestDay = deepAnalytics.dayOfWeekAnalysis.reduce((best, day) => 
-      day.avgRevenue > best.avgRevenue ? day : best
+    const bestDay = deepAnalytics.dayOfWeekAnalysis.reduce((best, day) =>
+      day.avgRevenue > best.avgRevenue ? day : best,
     );
-    const worstDay = deepAnalytics.dayOfWeekAnalysis.reduce((worst, day) => 
-      day.avgRevenue < worst.avgRevenue ? day : worst
+    const worstDay = deepAnalytics.dayOfWeekAnalysis.reduce((worst, day) =>
+      day.avgRevenue < worst.avgRevenue ? day : worst,
     );
-    
+
     insightsList.push({
       type: 'performance',
       icon: <Target className="h-4 w-4" />,
       title: 'Лучший день недели',
       description: `${bestDay.dayName} показывает среднюю выручку ${formatCurrency(bestDay.avgRevenue)}`,
       impact: 'positive',
-      recommendation: `Сосредоточьтесь на максимизации продаж в ${bestDay.dayName}`
+      recommendation: `Сосредоточьтесь на максимизации продаж в ${bestDay.dayName}`,
     });
 
     // Инсайт по трендам
@@ -202,7 +217,7 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
         title: 'Положительный тренд',
         description: `Выручка растет на ${(deepAnalytics.trendSlope * 100).toFixed(1)}% в день`,
         impact: 'positive',
-        recommendation: 'Поддерживайте текущую стратегию развития'
+        recommendation: 'Поддерживайте текущую стратегию развития',
       });
     } else if (deepAnalytics.trendSlope < -0.05) {
       insightsList.push({
@@ -211,7 +226,7 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
         title: 'Отрицательный тренд',
         description: `Выручка снижается на ${Math.abs(deepAnalytics.trendSlope * 100).toFixed(1)}% в день`,
         impact: 'negative',
-        recommendation: 'Требуется корректировка стратегии'
+        recommendation: 'Требуется корректировка стратегии',
       });
     }
 
@@ -223,7 +238,7 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
         title: 'Высокая волатильность',
         description: `Колебания выручки составляют ${(deepAnalytics.volatility * 100).toFixed(1)}%`,
         impact: 'warning',
-        recommendation: 'Рассмотрите стабилизацию продаж'
+        recommendation: 'Рассмотрите стабилизацию продаж',
       });
     } else {
       insightsList.push({
@@ -232,7 +247,7 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
         title: 'Стабильные продажи',
         description: `Низкая волатильность: ${(deepAnalytics.volatility * 100).toFixed(1)}%`,
         impact: 'positive',
-        recommendation: 'Отличная стабильность бизнеса'
+        recommendation: 'Отличная стабильность бизнеса',
       });
     }
 
@@ -242,9 +257,9 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
         type: 'weather',
         icon: <Cloud className="h-4 w-4" />,
         title: 'Погодная зависимость',
-        description: `Погода влияет на выручку на ${Math.abs(deepAnalytics.correlations.weatherRevenue / deepAnalytics.avgRevenue * 100).toFixed(1)}%`,
+        description: `Погода влияет на выручку на ${Math.abs((deepAnalytics.correlations.weatherRevenue / deepAnalytics.avgRevenue) * 100).toFixed(1)}%`,
         impact: deepAnalytics.correlations.weatherRevenue > 0 ? 'positive' : 'negative',
-        recommendation: 'Учитывайте погодные условия в планировании'
+        recommendation: 'Учитывайте погодные условия в планировании',
       });
     }
 
@@ -264,7 +279,7 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
       datasets: [
         {
           label: 'Прогноз выручки',
-          data: selectedWeekData.days.map(day => day.predictedRevenue ?? 0),
+          data: selectedWeekData.days.map((day) => day.predictedRevenue ?? 0),
           borderColor: 'rgb(59, 130, 246)',
           backgroundColor: 'rgba(59, 130, 246, 0.1)',
           fill: true,
@@ -275,7 +290,7 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
         },
         {
           label: 'Уверенность (%)',
-          data: selectedWeekData.days.map(day => (day.confidence ?? 0) * 100),
+          data: selectedWeekData.days.map((day) => (day.confidence ?? 0) * 100),
           borderColor: 'rgb(16, 185, 129)',
           backgroundColor: 'rgba(16, 185, 129, 0.1)',
           fill: false,
@@ -283,8 +298,8 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
           borderWidth: 2,
           pointRadius: 4,
           yAxisID: 'y1',
-        }
-      ]
+        },
+      ],
     };
   }, [weeklyForecasts, selectedWeek]);
 
@@ -312,8 +327,8 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
             }
             return `Уверенность: ${value.toFixed(1)}%`;
           },
-        }
-      }
+        },
+      },
     },
     scales: {
       y: {
@@ -322,13 +337,13 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
         position: 'left',
         title: {
           display: true,
-          text: 'Выручка (₽)'
+          text: 'Выручка (₽)',
         },
         ticks: {
-          callback: function(value) {
+          callback: function (value) {
             return formatCurrency(Number(value));
-          }
-        }
+          },
+        },
       },
       y1: {
         type: 'linear',
@@ -336,7 +351,7 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
         position: 'right',
         title: {
           display: true,
-          text: 'Уверенность (%)'
+          text: 'Уверенность (%)',
         },
         grid: {
           drawOnChartArea: false,
@@ -345,10 +360,10 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
       x: {
         title: {
           display: true,
-          text: 'Дни недели'
-        }
-      }
-    }
+          text: 'Дни недели',
+        },
+      },
+    },
   };
 
   return (
@@ -364,9 +379,11 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
         <CardDescription>
           Глубокая аналитика с машинным обучением, анализом трендов и персонализированными инсайтами
           <br />
-          <span className="text-orange-600 font-medium">⚠️ Функция в разработке - возможны неточности в расчетах</span>
+          <span className="text-orange-600 font-medium">
+            ⚠️ Функция в разработке - возможны неточности в расчетах
+          </span>
         </CardDescription>
-        
+
         {/* Переключатели вкладок */}
         <div className="flex gap-2 mt-4">
           <Button
@@ -398,7 +415,7 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
           </Button>
         </div>
       </CardHeader>
-      
+
       <CardContent className="space-y-6">
         {/* Вкладка Прогноз */}
         {activeTab === 'forecast' && (
@@ -421,7 +438,9 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setSelectedWeek(Math.min(weeklyForecasts.length - 1, selectedWeek + 1))}
+                  onClick={() =>
+                    setSelectedWeek(Math.min(weeklyForecasts.length - 1, selectedWeek + 1))
+                  }
                   disabled={selectedWeek === weeklyForecasts.length - 1}
                 >
                   <ArrowRight className="h-4 w-4" />
@@ -439,20 +458,16 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
             {/* Карточки недель */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               {weeklyForecasts.map((week, index) => (
-                <Card 
-                  key={week.week} 
+                <Card
+                  key={week.week}
                   className={`p-4 cursor-pointer transition-all duration-200 ${
-                    index === selectedWeek 
-                      ? 'ring-2 ring-blue-500 bg-blue-50' 
-                      : 'hover:shadow-md'
+                    index === selectedWeek ? 'ring-2 ring-blue-500 bg-blue-50' : 'hover:shadow-md'
                   }`}
                   onClick={() => setSelectedWeek(index)}
                 >
                   <div className="text-center space-y-2">
                     <div className="font-bold text-lg">Неделя {week.week}</div>
-                    <div className="text-sm text-gray-600">
-                      {formatCurrency(week.revenue)}
-                    </div>
+                    <div className="text-sm text-gray-600">{formatCurrency(week.revenue)}</div>
                     <div className="flex items-center justify-center gap-1">
                       {week.trend > 0.05 ? (
                         <TrendingUp className="h-3 w-3 text-green-500" />
@@ -462,7 +477,8 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
                         <Minus className="h-3 w-3 text-gray-500" />
                       )}
                       <span className="text-xs text-gray-500">
-                        {week.trend > 0 ? '+' : ''}{(week.trend * 100).toFixed(1)}%
+                        {week.trend > 0 ? '+' : ''}
+                        {(week.trend * 100).toFixed(1)}%
                       </span>
                     </div>
                     <div className="text-xs text-gray-500">
@@ -506,7 +522,11 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
                     <span className="font-semibold">Погода</span>
                   </div>
                   <div className="text-sm text-gray-600">
-                    Влияние: {Math.abs(deepAnalytics.correlations.weatherRevenue / deepAnalytics.avgRevenue * 100).toFixed(1)}%
+                    Влияние:{' '}
+                    {Math.abs(
+                      (deepAnalytics.correlations.weatherRevenue / deepAnalytics.avgRevenue) * 100,
+                    ).toFixed(1)}
+                    %
                   </div>
                 </Card>
                 <Card className="p-4">
@@ -515,7 +535,11 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
                     <span className="font-semibold">Праздники</span>
                   </div>
                   <div className="text-sm text-gray-600">
-                    Влияние: {Math.abs(deepAnalytics.correlations.holidayRevenue / deepAnalytics.avgRevenue * 100).toFixed(1)}%
+                    Влияние:{' '}
+                    {Math.abs(
+                      (deepAnalytics.correlations.holidayRevenue / deepAnalytics.avgRevenue) * 100,
+                    ).toFixed(1)}
+                    %
                   </div>
                 </Card>
                 <Card className="p-4">
@@ -524,7 +548,11 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
                     <span className="font-semibold">Сезонность</span>
                   </div>
                   <div className="text-sm text-gray-600">
-                    Влияние: {Math.abs(deepAnalytics.correlations.seasonalRevenue / deepAnalytics.avgRevenue * 100).toFixed(1)}%
+                    Влияние:{' '}
+                    {Math.abs(
+                      (deepAnalytics.correlations.seasonalRevenue / deepAnalytics.avgRevenue) * 100,
+                    ).toFixed(1)}
+                    %
                   </div>
                 </Card>
                 <Card className="p-4">
@@ -533,7 +561,11 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
                     <span className="font-semibold">Тренд</span>
                   </div>
                   <div className="text-sm text-gray-600">
-                    Влияние: {Math.abs(deepAnalytics.correlations.trendRevenue / deepAnalytics.avgRevenue * 100).toFixed(1)}%
+                    Влияние:{' '}
+                    {Math.abs(
+                      (deepAnalytics.correlations.trendRevenue / deepAnalytics.avgRevenue) * 100,
+                    ).toFixed(1)}
+                    %
                   </div>
                 </Card>
               </div>
@@ -551,9 +583,7 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
                   <div className="text-sm text-gray-600">
                     Качество: {(Math.abs(deepAnalytics.mlModelQuality.arima) * 100).toFixed(1)}%
                   </div>
-                  <div className="text-xs text-gray-500 mt-1">
-                    Временные ряды
-                  </div>
+                  <div className="text-xs text-gray-500 mt-1">Временные ряды</div>
                 </Card>
                 <Card className="p-4">
                   <div className="flex items-center gap-3 mb-2">
@@ -563,9 +593,7 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
                   <div className="text-sm text-gray-600">
                     Качество: {(Math.abs(deepAnalytics.mlModelQuality.prophet) * 100).toFixed(1)}%
                   </div>
-                  <div className="text-xs text-gray-500 mt-1">
-                    Сезонность
-                  </div>
+                  <div className="text-xs text-gray-500 mt-1">Сезонность</div>
                 </Card>
                 <Card className="p-4">
                   <div className="flex items-center gap-3 mb-2">
@@ -575,9 +603,7 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
                   <div className="text-sm text-gray-600">
                     Качество: {(Math.abs(deepAnalytics.mlModelQuality.lstm) * 100).toFixed(1)}%
                   </div>
-                  <div className="text-xs text-gray-500 mt-1">
-                    Нейросеть
-                  </div>
+                  <div className="text-xs text-gray-500 mt-1">Нейросеть</div>
                 </Card>
               </div>
             </div>
@@ -599,9 +625,7 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
                   <div className="text-sm text-gray-600">Волатильность</div>
                 </Card>
                 <Card className="p-4 text-center">
-                  <div className="text-2xl font-bold text-blue-600">
-                    {deepAnalytics.totalDays}
-                  </div>
+                  <div className="text-2xl font-bold text-blue-600">{deepAnalytics.totalDays}</div>
                   <div className="text-sm text-gray-600">Дней анализа</div>
                 </Card>
               </div>
@@ -613,22 +637,33 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
         {activeTab === 'insights' && (
           <div className="space-y-6">
             <h3 className="text-lg font-semibold">Персонализированные инсайты</h3>
-            
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {insights.map((insight, index) => (
-                <Card key={index} className={`p-4 ${
-                  insight.impact === 'positive' ? 'bg-green-50 border-green-200' :
-                  insight.impact === 'negative' ? 'bg-red-50 border-red-200' :
-                  insight.impact === 'warning' ? 'bg-yellow-50 border-yellow-200' :
-                  'bg-gray-50 border-gray-200'
-                }`}>
+                <Card
+                  key={index}
+                  className={`p-4 ${
+                    insight.impact === 'positive'
+                      ? 'bg-green-50 border-green-200'
+                      : insight.impact === 'negative'
+                        ? 'bg-red-50 border-red-200'
+                        : insight.impact === 'warning'
+                          ? 'bg-yellow-50 border-yellow-200'
+                          : 'bg-gray-50 border-gray-200'
+                  }`}
+                >
                   <div className="flex items-start gap-3">
-                    <div className={`p-2 rounded-lg ${
-                      insight.impact === 'positive' ? 'bg-green-100 text-green-600' :
-                      insight.impact === 'negative' ? 'bg-red-100 text-red-600' :
-                      insight.impact === 'warning' ? 'bg-yellow-100 text-yellow-600' :
-                      'bg-gray-100 text-gray-600'
-                    }`}>
+                    <div
+                      className={`p-2 rounded-lg ${
+                        insight.impact === 'positive'
+                          ? 'bg-green-100 text-green-600'
+                          : insight.impact === 'negative'
+                            ? 'bg-red-100 text-red-600'
+                            : insight.impact === 'warning'
+                              ? 'bg-yellow-100 text-yellow-600'
+                              : 'bg-gray-100 text-gray-600'
+                      }`}
+                    >
                       {insight.icon}
                     </div>
                     <div className="flex-1">

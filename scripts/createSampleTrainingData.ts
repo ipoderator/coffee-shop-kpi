@@ -12,18 +12,14 @@ function generateDailyRows(): Array<Record<string, number | string>> {
   const startDate = new Date(today);
   startDate.setMonth(startDate.getMonth() - 3);
 
-  for (
-    let cursor = new Date(startDate);
-    cursor <= today;
-    cursor.setDate(cursor.getDate() + 1)
-  ) {
+  for (let cursor = new Date(startDate); cursor <= today; cursor.setDate(cursor.getDate() + 1)) {
     const cash = Math.round(5000 + Math.random() * 5000);
     const terminal = Math.round(6000 + Math.random() * 6000);
     const qr = Math.round(1500 + Math.random() * 1500);
     const amount = cash + terminal + qr;
 
     rows.push({
-      'Дата': cursor.toISOString().slice(0, 10),
+      Дата: cursor.toISOString().slice(0, 10),
       'Выручка за день': amount,
       'Оплата наличными': cash,
       'Оплата по терминалу': terminal,

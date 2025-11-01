@@ -108,27 +108,27 @@ export class AdvancedAnalyticsEngine {
   // K-means кластеризация клиентов
   private performCustomerClustering(): CustomerCluster[] {
     const customerData = this.prepareCustomerData();
-    
+
     if (customerData.length < 3) {
       return this.createDefaultCustomerClusters(customerData);
     }
 
     // Определяем количество кластеров (2-5)
     const k = Math.min(5, Math.max(2, Math.floor(customerData.length / 10)));
-    
+
     // Инициализируем центроиды случайным образом
     const centroids = this.initializeCentroids(customerData, k);
-    
+
     // Выполняем K-means
     const clusters = this.kMeansClustering(customerData, centroids, k);
-    
+
     return this.formatCustomerClusters(clusters);
   }
 
   // K-means кластеризация товаров
   private performProductClustering(): ProductCluster[] {
     const productData = this.prepareProductData();
-    
+
     if (productData.length < 3) {
       return this.createDefaultProductClusters(productData);
     }
@@ -136,7 +136,7 @@ export class AdvancedAnalyticsEngine {
     const k = Math.min(4, Math.max(2, Math.floor(productData.length / 8)));
     const centroids = this.initializeCentroids(productData, k);
     const clusters = this.kMeansClustering(productData, centroids, k);
-    
+
     return this.formatProductClusters(clusters);
   }
 
@@ -149,8 +149,8 @@ export class AdvancedAnalyticsEngine {
     transactions: Transaction[];
   }> {
     const customerMap = new Map<string, Transaction[]>();
-    
-    this.transactions.forEach(tx => {
+
+    this.transactions.forEach((tx) => {
       const customerId = tx.employee || 'anonymous';
       if (!customerMap.has(customerId)) {
         customerMap.set(customerId, []);
@@ -162,13 +162,13 @@ export class AdvancedAnalyticsEngine {
       const avgCheck = transactions.reduce((sum, t) => sum + t.amount, 0) / transactions.length;
       const frequency = transactions.length;
       const seasonality = this.calculateCustomerSeasonality(transactions);
-      
+
       return {
         id,
         avgCheck,
         frequency,
         seasonality,
-        transactions
+        transactions,
       };
     });
   }
@@ -182,8 +182,8 @@ export class AdvancedAnalyticsEngine {
     transactions: Transaction[];
   }> {
     const productMap = new Map<string, Transaction[]>();
-    
-    this.transactions.forEach(tx => {
+
+    this.transactions.forEach((tx) => {
       const productId = tx.category || 'general';
       if (!productMap.has(productId)) {
         productMap.set(productId, []);
@@ -195,13 +195,13 @@ export class AdvancedAnalyticsEngine {
       const avgPrice = transactions.reduce((sum, t) => sum + t.amount, 0) / transactions.length;
       const demandPattern = this.calculateDemandPattern(transactions);
       const seasonality = this.calculateProductSeasonality(transactions);
-      
+
       return {
         id,
         avgPrice,
         demandPattern,
         seasonality,
-        transactions
+        transactions,
       };
     });
   }
@@ -211,14 +211,14 @@ export class AdvancedAnalyticsEngine {
     const weeklyRevenue = new Array(7).fill(0);
     const weeklyCount = new Array(7).fill(0);
 
-    transactions.forEach(tx => {
+    transactions.forEach((tx) => {
       const dayOfWeek = getDay(new Date(tx.date));
       weeklyRevenue[dayOfWeek] += tx.amount;
       weeklyCount[dayOfWeek]++;
     });
 
-    return weeklyRevenue.map((revenue, day) => 
-      weeklyCount[day] > 0 ? revenue / weeklyCount[day] : 0
+    return weeklyRevenue.map((revenue, day) =>
+      weeklyCount[day] > 0 ? revenue / weeklyCount[day] : 0,
     );
   }
 
@@ -227,14 +227,14 @@ export class AdvancedAnalyticsEngine {
     const hourlyDemand = new Array(24).fill(0);
     const hourlyCount = new Array(24).fill(0);
 
-    transactions.forEach(tx => {
+    transactions.forEach((tx) => {
       const hour = new Date(tx.date).getHours();
       hourlyDemand[hour] += tx.amount;
       hourlyCount[hour]++;
     });
 
-    return hourlyDemand.map((demand, hour) => 
-      hourlyCount[hour] > 0 ? demand / hourlyCount[hour] : 0
+    return hourlyDemand.map((demand, hour) =>
+      hourlyCount[hour] > 0 ? demand / hourlyCount[hour] : 0,
     );
   }
 
@@ -243,14 +243,14 @@ export class AdvancedAnalyticsEngine {
     const monthlyRevenue = new Array(12).fill(0);
     const monthlyCount = new Array(12).fill(0);
 
-    transactions.forEach(tx => {
+    transactions.forEach((tx) => {
       const month = getMonth(new Date(tx.date));
       monthlyRevenue[month] += tx.amount;
       monthlyCount[month]++;
     });
 
-    return monthlyRevenue.map((revenue, month) => 
-      monthlyCount[month] > 0 ? revenue / monthlyCount[month] : 0
+    return monthlyRevenue.map((revenue, month) =>
+      monthlyCount[month] > 0 ? revenue / monthlyCount[month] : 0,
     );
   }
 
@@ -258,17 +258,17 @@ export class AdvancedAnalyticsEngine {
   private initializeCentroids(data: any[], k: number): any[] {
     const centroids = [];
     const usedIndices = new Set<number>();
-    
+
     for (let i = 0; i < k; i++) {
       let randomIndex;
       do {
         randomIndex = Math.floor(Math.random() * data.length);
       } while (usedIndices.has(randomIndex));
-      
+
       usedIndices.add(randomIndex);
       centroids.push({ ...data[randomIndex] });
     }
-    
+
     return centroids;
   }
 
@@ -282,11 +282,11 @@ export class AdvancedAnalyticsEngine {
     while (changed && iterations < maxIterations) {
       // Назначаем точки к ближайшим центроидам
       clusters = Array.from({ length: k }, () => [] as any[]);
-      
-      data.forEach(point => {
+
+      data.forEach((point) => {
         let minDistance = Infinity;
         let closestCentroid = 0;
-        
+
         centroids.forEach((centroid, index) => {
           const distance = this.calculateDistance(point, centroid);
           if (distance < minDistance) {
@@ -294,7 +294,7 @@ export class AdvancedAnalyticsEngine {
             closestCentroid = index;
           }
         });
-        
+
         clusters[closestCentroid].push(point);
       });
 
@@ -302,7 +302,7 @@ export class AdvancedAnalyticsEngine {
       const newCentroids = centroids.map((_, index) => {
         const cluster = clusters[index];
         if (cluster.length === 0) return centroids[index];
-        
+
         return this.calculateCentroid(cluster);
       });
 
@@ -319,64 +319,67 @@ export class AdvancedAnalyticsEngine {
   private calculateDistance(point1: any, point2: any): number {
     const features = ['avgCheck', 'frequency'];
     let distance = 0;
-    
-    features.forEach(feature => {
+
+    features.forEach((feature) => {
       if (point1[feature] !== undefined && point2[feature] !== undefined) {
         distance += Math.pow(point1[feature] - point2[feature], 2);
       }
     });
-    
+
     // Добавляем расстояние по сезонности
     if (point1.seasonality && point2.seasonality) {
-      const seasonalityDistance = point1.seasonality.reduce((sum: number, val: number, index: number) => {
-        return sum + Math.pow(val - (point2.seasonality[index] || 0), 2);
-      }, 0);
+      const seasonalityDistance = point1.seasonality.reduce(
+        (sum: number, val: number, index: number) => {
+          return sum + Math.pow(val - (point2.seasonality[index] || 0), 2);
+        },
+        0,
+      );
       distance += seasonalityDistance;
     }
-    
+
     return Math.sqrt(distance);
   }
 
   // Расчет центроида кластера
   private calculateCentroid(cluster: any[]): any {
     if (cluster.length === 0) return {};
-    
+
     const centroid: any = {};
     const features = ['avgCheck', 'frequency'];
-    
-    features.forEach(feature => {
-      const values = cluster.map(point => point[feature] || 0);
+
+    features.forEach((feature) => {
+      const values = cluster.map((point) => point[feature] || 0);
       centroid[feature] = values.reduce((sum, val) => sum + val, 0) / values.length;
     });
-    
+
     // Средняя сезонность
     if (cluster[0].seasonality) {
       const seasonalityLength = cluster[0].seasonality.length;
       centroid.seasonality = Array(seasonalityLength).fill(0);
-      
-      cluster.forEach(point => {
+
+      cluster.forEach((point) => {
         if (point.seasonality) {
           point.seasonality.forEach((val: number, index: number) => {
             centroid.seasonality[index] += val;
           });
         }
       });
-      
+
       centroid.seasonality = centroid.seasonality.map((sum: number) => sum / cluster.length);
     }
-    
+
     return centroid;
   }
 
   // Проверка изменения центроидов
   private centroidsChanged(oldCentroids: any[], newCentroids: any[]): boolean {
     const threshold = 0.01;
-    
+
     for (let i = 0; i < oldCentroids.length; i++) {
       const distance = this.calculateDistance(oldCentroids[i], newCentroids[i]);
       if (distance > threshold) return true;
     }
-    
+
     return false;
   }
 
@@ -384,11 +387,11 @@ export class AdvancedAnalyticsEngine {
   private formatCustomerClusters(clusters: any[][]): CustomerCluster[] {
     return clusters.map((cluster, index) => {
       if (cluster.length === 0) return this.createEmptyCustomerCluster(index);
-      
+
       const avgCheck = cluster.reduce((sum, c) => sum + c.avgCheck, 0) / cluster.length;
       const frequency = cluster.reduce((sum, c) => sum + c.frequency, 0) / cluster.length;
       const seasonality = cluster[0].seasonality || Array(7).fill(0);
-      
+
       return {
         id: `customer_cluster_${index}`,
         name: this.getCustomerClusterName(avgCheck, frequency),
@@ -401,9 +404,9 @@ export class AdvancedAnalyticsEngine {
           isFrequent: frequency > 10,
           isSeasonal: this.calculateSeasonalityIndex(seasonality) > 0.3,
           preferredDays: this.getPreferredDays(seasonality),
-          preferredMonths: this.getPreferredMonths(cluster)
+          preferredMonths: this.getPreferredMonths(cluster),
         },
-        transactions: cluster.flatMap(c => c.transactions)
+        transactions: cluster.flatMap((c) => c.transactions),
       };
     });
   }
@@ -412,11 +415,11 @@ export class AdvancedAnalyticsEngine {
   private formatProductClusters(clusters: any[][]): ProductCluster[] {
     return clusters.map((cluster, index) => {
       if (cluster.length === 0) return this.createEmptyProductCluster(index);
-      
+
       const avgPrice = cluster.reduce((sum, c) => sum + c.avgPrice, 0) / cluster.length;
       const demandPattern = cluster[0].demandPattern || Array(24).fill(0);
       const seasonality = cluster[0].seasonality || Array(12).fill(0);
-      
+
       return {
         id: `product_cluster_${index}`,
         name: this.getProductClusterName(avgPrice),
@@ -429,9 +432,9 @@ export class AdvancedAnalyticsEngine {
           isSeasonal: this.calculateSeasonalityIndex(seasonality) > 0.3,
           isStable: this.calculateStabilityIndex(demandPattern) > 0.7,
           peakHours: this.getPeakHours(demandPattern),
-          peakDays: this.getPeakDays(seasonality)
+          peakDays: this.getPeakDays(seasonality),
         },
-        transactions: cluster.flatMap(c => c.transactions)
+        transactions: cluster.flatMap((c) => c.transactions),
       };
     });
   }
@@ -442,7 +445,7 @@ export class AdvancedAnalyticsEngine {
       ...this.detectRevenueAnomalies(),
       ...this.detectVolumeAnomalies(),
       ...this.detectPatternAnomalies(),
-      ...this.detectSeasonalAnomalies()
+      ...this.detectSeasonalAnomalies(),
     ];
   }
 
@@ -450,21 +453,21 @@ export class AdvancedAnalyticsEngine {
   private detectRevenueAnomalies(): Anomaly[] {
     const anomalies: Anomaly[] = [];
     const dailyRevenue = this.calculateDailyRevenue();
-    
+
     if (dailyRevenue.length < 7) return anomalies;
-    
+
     const mean = dailyRevenue.reduce((sum, d) => sum + d.revenue, 0) / dailyRevenue.length;
     const stdDev = Math.sqrt(
-      dailyRevenue.reduce((sum, d) => sum + Math.pow(d.revenue - mean, 2), 0) / dailyRevenue.length
+      dailyRevenue.reduce((sum, d) => sum + Math.pow(d.revenue - mean, 2), 0) / dailyRevenue.length,
     );
-    
+
     dailyRevenue.forEach((day, index) => {
       const zScore = Math.abs(day.revenue - mean) / stdDev;
-      
+
       if (zScore > 2) {
         const severity = zScore > 3 ? 'critical' : zScore > 2.5 ? 'high' : 'medium';
         const deviation = (day.revenue - mean) / mean;
-        
+
         anomalies.push({
           id: `revenue_anomaly_${index}`,
           type: 'revenue',
@@ -475,11 +478,11 @@ export class AdvancedAnalyticsEngine {
           deviation,
           description: this.getRevenueAnomalyDescription(deviation, severity),
           impact: Math.abs(deviation),
-          recommendations: this.getRevenueAnomalyRecommendations(deviation, severity)
+          recommendations: this.getRevenueAnomalyRecommendations(deviation, severity),
         });
       }
     });
-    
+
     return anomalies;
   }
 
@@ -487,21 +490,21 @@ export class AdvancedAnalyticsEngine {
   private detectVolumeAnomalies(): Anomaly[] {
     const anomalies: Anomaly[] = [];
     const dailyVolume = this.calculateDailyVolume();
-    
+
     if (dailyVolume.length < 7) return anomalies;
-    
+
     const mean = dailyVolume.reduce((sum, d) => sum + d.volume, 0) / dailyVolume.length;
     const stdDev = Math.sqrt(
-      dailyVolume.reduce((sum, d) => sum + Math.pow(d.volume - mean, 2), 0) / dailyVolume.length
+      dailyVolume.reduce((sum, d) => sum + Math.pow(d.volume - mean, 2), 0) / dailyVolume.length,
     );
-    
+
     dailyVolume.forEach((day, index) => {
       const zScore = Math.abs(day.volume - mean) / stdDev;
-      
+
       if (zScore > 2) {
         const severity = zScore > 3 ? 'critical' : zScore > 2.5 ? 'high' : 'medium';
         const deviation = (day.volume - mean) / mean;
-        
+
         anomalies.push({
           id: `volume_anomaly_${index}`,
           type: 'volume',
@@ -512,11 +515,11 @@ export class AdvancedAnalyticsEngine {
           deviation,
           description: this.getVolumeAnomalyDescription(deviation, severity),
           impact: Math.abs(deviation),
-          recommendations: this.getVolumeAnomalyRecommendations(deviation, severity)
+          recommendations: this.getVolumeAnomalyRecommendations(deviation, severity),
         });
       }
     });
-    
+
     return anomalies;
   }
 
@@ -524,14 +527,14 @@ export class AdvancedAnalyticsEngine {
   private detectPatternAnomalies(): Anomaly[] {
     const anomalies: Anomaly[] = [];
     const hourlyPattern = this.calculateHourlyPattern();
-    
+
     // Анализируем отклонения от типичного паттерна
     const typicalPattern = this.calculateTypicalHourlyPattern();
-    
+
     hourlyPattern.forEach((hour, index) => {
       const expected = typicalPattern[index] || 0;
       const deviation = expected > 0 ? (hour - expected) / expected : 0;
-      
+
       if (Math.abs(deviation) > 0.5) {
         anomalies.push({
           id: `pattern_anomaly_${index}`,
@@ -543,11 +546,14 @@ export class AdvancedAnalyticsEngine {
           deviation,
           description: `Необычная активность в ${index}:00`,
           impact: Math.abs(deviation),
-          recommendations: ['Проверить расписание работы', 'Анализировать причины пиковой активности']
+          recommendations: [
+            'Проверить расписание работы',
+            'Анализировать причины пиковой активности',
+          ],
         });
       }
     });
-    
+
     return anomalies;
   }
 
@@ -555,17 +561,18 @@ export class AdvancedAnalyticsEngine {
   private detectSeasonalAnomalies(): Anomaly[] {
     const anomalies: Anomaly[] = [];
     const monthlyRevenue = this.calculateMonthlyRevenue();
-    
+
     if (monthlyRevenue.length < 12) return anomalies;
-    
+
     // Сравниваем с предыдущим годом
     const currentYear = monthlyRevenue.slice(-12);
     const previousYear = monthlyRevenue.slice(-24, -12);
-    
+
     currentYear.forEach((month, index) => {
       if (previousYear[index]) {
-        const deviation = (month.revenue - previousYear[index].revenue) / previousYear[index].revenue;
-        
+        const deviation =
+          (month.revenue - previousYear[index].revenue) / previousYear[index].revenue;
+
         if (Math.abs(deviation) > 0.3) {
           anomalies.push({
             id: `seasonal_anomaly_${index}`,
@@ -577,33 +584,33 @@ export class AdvancedAnalyticsEngine {
             deviation,
             description: `Сезонная аномалия в ${month.date}`,
             impact: Math.abs(deviation),
-            recommendations: ['Анализировать сезонные факторы', 'Корректировать прогнозы']
+            recommendations: ['Анализировать сезонные факторы', 'Корректировать прогнозы'],
           });
         }
       }
     });
-    
+
     return anomalies;
   }
 
   // Анализ трендов
   public analyzeTrends(): TrendAnalysis {
     const dailyRevenue = this.calculateDailyRevenue();
-    
+
     if (dailyRevenue.length < 14) {
       return this.getDefaultTrendAnalysis();
     }
-    
+
     const recent = dailyRevenue.slice(-7);
     const previous = dailyRevenue.slice(-14, -7);
-    
+
     const recentAvg = recent.reduce((sum, d) => sum + d.revenue, 0) / recent.length;
     const previousAvg = previous.reduce((sum, d) => sum + d.revenue, 0) / previous.length;
-    
+
     const growth = previousAvg > 0 ? (recentAvg - previousAvg) / previousAvg : 0;
     const direction = growth > 0.05 ? 'up' : growth < -0.05 ? 'down' : 'stable';
     const strength = Math.min(1, Math.abs(growth) * 2);
-    
+
     return {
       period: '7 дней',
       direction: direction as any,
@@ -614,13 +621,13 @@ export class AdvancedAnalyticsEngine {
         economic: 0.1,
         weather: 0.05,
         social: 0.02,
-        internal: 0.8
+        internal: 0.8,
       },
       forecast: {
         nextWeek: recentAvg * 1.02,
         nextMonth: recentAvg * 4.1,
-        nextQuarter: recentAvg * 12.3
-      }
+        nextQuarter: recentAvg * 12.3,
+      },
     };
   }
 
@@ -629,7 +636,7 @@ export class AdvancedAnalyticsEngine {
     return this.customerClusters.map((cluster, index) => {
       const growth = this.calculateClusterGrowth(cluster);
       const profitability = this.calculateClusterProfitability(cluster);
-      
+
       return {
         id: `market_segment_${index}`,
         name: cluster.name,
@@ -640,10 +647,10 @@ export class AdvancedAnalyticsEngine {
           avgCheck: cluster.avgCheck,
           frequency: cluster.frequency,
           loyalty: this.calculateLoyalty(cluster),
-          seasonality: this.calculateSeasonalityIndex(cluster.seasonality)
+          seasonality: this.calculateSeasonalityIndex(cluster.seasonality),
         },
         opportunities: this.identifyOpportunities(cluster),
-        risks: this.identifyRisks(cluster)
+        risks: this.identifyRisks(cluster),
       };
     });
   }
@@ -662,9 +669,9 @@ export class AdvancedAnalyticsEngine {
         isFrequent: customer.frequency > 10,
         isSeasonal: false,
         preferredDays: [],
-        preferredMonths: []
+        preferredMonths: [],
       },
-      transactions: customer.transactions
+      transactions: customer.transactions,
     }));
   }
 
@@ -681,9 +688,9 @@ export class AdvancedAnalyticsEngine {
         isSeasonal: false,
         isStable: true,
         peakHours: [],
-        peakDays: []
+        peakDays: [],
       },
-      transactions: product.transactions
+      transactions: product.transactions,
     }));
   }
 
@@ -700,9 +707,9 @@ export class AdvancedAnalyticsEngine {
         isFrequent: false,
         isSeasonal: false,
         preferredDays: [],
-        preferredMonths: []
+        preferredMonths: [],
       },
-      transactions: []
+      transactions: [],
     };
   }
 
@@ -719,9 +726,9 @@ export class AdvancedAnalyticsEngine {
         isSeasonal: false,
         isStable: false,
         peakHours: [],
-        peakDays: []
+        peakDays: [],
       },
-      transactions: []
+      transactions: [],
     };
   }
 
@@ -741,14 +748,16 @@ export class AdvancedAnalyticsEngine {
   private calculateSeasonalityIndex(seasonality: number[]): number {
     if (seasonality.length === 0) return 0;
     const mean = seasonality.reduce((sum, val) => sum + val, 0) / seasonality.length;
-    const variance = seasonality.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / seasonality.length;
+    const variance =
+      seasonality.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / seasonality.length;
     return Math.sqrt(variance) / (mean + 1);
   }
 
   private calculateStabilityIndex(pattern: number[]): number {
     if (pattern.length === 0) return 0;
     const mean = pattern.reduce((sum, val) => sum + val, 0) / pattern.length;
-    const variance = pattern.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / pattern.length;
+    const variance =
+      pattern.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / pattern.length;
     return Math.max(0, 1 - Math.sqrt(variance) / (mean + 1));
   }
 
@@ -756,31 +765,31 @@ export class AdvancedAnalyticsEngine {
     const maxValue = Math.max(...seasonality);
     return seasonality
       .map((val, index) => ({ val, index }))
-      .filter(item => item.val > maxValue * 0.8)
-      .map(item => item.index);
+      .filter((item) => item.val > maxValue * 0.8)
+      .map((item) => item.index);
   }
 
   private getPreferredMonths(cluster: any[]): number[] {
     const monthlyCount = new Array(12).fill(0);
-    cluster.forEach(customer => {
+    cluster.forEach((customer) => {
       customer.transactions.forEach((tx: Transaction) => {
         monthlyCount[getMonth(new Date(tx.date))]++;
       });
     });
-    
+
     const maxCount = Math.max(...monthlyCount);
     return monthlyCount
       .map((count, index) => ({ count, index }))
-      .filter(item => item.count > maxCount * 0.8)
-      .map(item => item.index);
+      .filter((item) => item.count > maxCount * 0.8)
+      .map((item) => item.index);
   }
 
   private getPeakHours(demandPattern: number[]): number[] {
     const maxValue = Math.max(...demandPattern);
     return demandPattern
       .map((val, index) => ({ val, index }))
-      .filter(item => item.val > maxValue * 0.8)
-      .map(item => item.index);
+      .filter((item) => item.val > maxValue * 0.8)
+      .map((item) => item.index);
   }
 
   private getPeakDays(seasonality: number[]): number[] {
@@ -789,12 +798,12 @@ export class AdvancedAnalyticsEngine {
 
   private calculateDailyRevenue(): Array<{ date: string; revenue: number }> {
     const dailyMap = new Map<string, number>();
-    
-    this.transactions.forEach(tx => {
+
+    this.transactions.forEach((tx) => {
       const date = format(new Date(tx.date), 'yyyy-MM-dd');
       dailyMap.set(date, (dailyMap.get(date) || 0) + tx.amount);
     });
-    
+
     return Array.from(dailyMap.entries())
       .map(([date, revenue]) => ({ date, revenue }))
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
@@ -802,12 +811,12 @@ export class AdvancedAnalyticsEngine {
 
   private calculateDailyVolume(): Array<{ date: string; volume: number }> {
     const dailyMap = new Map<string, number>();
-    
-    this.transactions.forEach(tx => {
+
+    this.transactions.forEach((tx) => {
       const date = format(new Date(tx.date), 'yyyy-MM-dd');
       dailyMap.set(date, (dailyMap.get(date) || 0) + 1);
     });
-    
+
     return Array.from(dailyMap.entries())
       .map(([date, volume]) => ({ date, volume }))
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
@@ -816,33 +825,29 @@ export class AdvancedAnalyticsEngine {
   private calculateHourlyPattern(): number[] {
     const hourly = new Array(24).fill(0);
     const hourlyCount = new Array(24).fill(0);
-    
-    this.transactions.forEach(tx => {
+
+    this.transactions.forEach((tx) => {
       const hour = new Date(tx.date).getHours();
       hourly[hour] += tx.amount;
       hourlyCount[hour]++;
     });
-    
-    return hourly.map((revenue, hour) => 
-      hourlyCount[hour] > 0 ? revenue / hourlyCount[hour] : 0
-    );
+
+    return hourly.map((revenue, hour) => (hourlyCount[hour] > 0 ? revenue / hourlyCount[hour] : 0));
   }
 
   private calculateTypicalHourlyPattern(): number[] {
     // Возвращаем типичный паттерн для кофейни
-    return [
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-    ];
+    return [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
   }
 
   private calculateMonthlyRevenue(): Array<{ date: string; revenue: number }> {
     const monthlyMap = new Map<string, number>();
-    
-    this.transactions.forEach(tx => {
+
+    this.transactions.forEach((tx) => {
       const date = format(new Date(tx.date), 'yyyy-MM');
       monthlyMap.set(date, (monthlyMap.get(date) || 0) + tx.amount);
     });
-    
+
     return Array.from(monthlyMap.entries())
       .map(([date, revenue]) => ({ date, revenue }))
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
@@ -858,7 +863,7 @@ export class AdvancedAnalyticsEngine {
 
   private getRevenueAnomalyRecommendations(deviation: number, severity: string): string[] {
     const recommendations = [];
-    
+
     if (deviation > 0) {
       recommendations.push('Анализировать причины роста для повторения');
       recommendations.push('Увеличить запасы и персонал');
@@ -866,11 +871,11 @@ export class AdvancedAnalyticsEngine {
       recommendations.push('Исследовать причины падения');
       recommendations.push('Проверить качество обслуживания');
     }
-    
+
     if (severity === 'critical') {
       recommendations.push('Немедленно принять меры');
     }
-    
+
     return recommendations;
   }
 
@@ -884,7 +889,7 @@ export class AdvancedAnalyticsEngine {
 
   private getVolumeAnomalyRecommendations(deviation: number, severity: string): string[] {
     const recommendations = [];
-    
+
     if (deviation > 0) {
       recommendations.push('Проверить эффективность маркетинга');
       recommendations.push('Увеличить пропускную способность');
@@ -892,7 +897,7 @@ export class AdvancedAnalyticsEngine {
       recommendations.push('Проверить доступность услуг');
       recommendations.push('Анализировать конкуренцию');
     }
-    
+
     return recommendations;
   }
 
@@ -907,23 +912,23 @@ export class AdvancedAnalyticsEngine {
         economic: 0,
         weather: 0,
         social: 0,
-        internal: 1
+        internal: 1,
       },
       forecast: {
         nextWeek: 0,
         nextMonth: 0,
-        nextQuarter: 0
-      }
+        nextQuarter: 0,
+      },
     };
   }
 
   private calculateTrendConfidence(dailyRevenue: Array<{ date: string; revenue: number }>): number {
     if (dailyRevenue.length < 7) return 0.3;
-    
+
     const recent = dailyRevenue.slice(-7);
-    const variance = this.calculateVariance(recent.map(d => d.revenue));
+    const variance = this.calculateVariance(recent.map((d) => d.revenue));
     const mean = recent.reduce((sum, d) => sum + d.revenue, 0) / recent.length;
-    
+
     return Math.max(0.1, Math.min(0.9, 1 - Math.sqrt(variance) / (mean + 1)));
   }
 
@@ -935,9 +940,9 @@ export class AdvancedAnalyticsEngine {
   private calculateSeasonalFactor(): number {
     const monthlyRevenue = this.calculateMonthlyRevenue();
     if (monthlyRevenue.length < 12) return 0;
-    
+
     const currentYear = monthlyRevenue.slice(-12);
-    const seasonality = this.calculateSeasonalityIndex(currentYear.map(m => m.revenue));
+    const seasonality = this.calculateSeasonalityIndex(currentYear.map((m) => m.revenue));
     return seasonality;
   }
 
@@ -948,7 +953,7 @@ export class AdvancedAnalyticsEngine {
 
   private calculateClusterProfitability(cluster: CustomerCluster): number {
     // Упрощенный расчет прибыльности кластера
-    return cluster.avgCheck * cluster.frequency / 1000;
+    return (cluster.avgCheck * cluster.frequency) / 1000;
   }
 
   private calculateLoyalty(cluster: CustomerCluster): number {
@@ -958,37 +963,37 @@ export class AdvancedAnalyticsEngine {
 
   private identifyOpportunities(cluster: CustomerCluster): string[] {
     const opportunities = [];
-    
+
     if (cluster.characteristics.isHighValue && !cluster.characteristics.isFrequent) {
       opportunities.push('Увеличить частоту посещений VIP клиентов');
     }
-    
+
     if (cluster.characteristics.isFrequent && !cluster.characteristics.isHighValue) {
       opportunities.push('Повысить средний чек постоянных клиентов');
     }
-    
+
     if (cluster.characteristics.isSeasonal) {
       opportunities.push('Разработать сезонные предложения');
     }
-    
+
     return opportunities;
   }
 
   private identifyRisks(cluster: CustomerCluster): string[] {
     const risks = [];
-    
+
     if (cluster.size < 5) {
       risks.push('Небольшой размер сегмента');
     }
-    
+
     if (cluster.avgCheck < 100) {
       risks.push('Низкая средняя стоимость чека');
     }
-    
+
     if (cluster.frequency < 2) {
       risks.push('Низкая частота посещений');
     }
-    
+
     return risks;
   }
 
@@ -1006,10 +1011,10 @@ export class AdvancedAnalyticsEngine {
   }
 
   public getCriticalAnomalies(): Anomaly[] {
-    return this.anomalies.filter(a => a.severity === 'critical' || a.severity === 'high');
+    return this.anomalies.filter((a) => a.severity === 'critical' || a.severity === 'high');
   }
 
   public getAnomaliesByType(type: string): Anomaly[] {
-    return this.anomalies.filter(a => a.type === type);
+    return this.anomalies.filter((a) => a.type === type);
   }
 }

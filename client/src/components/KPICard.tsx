@@ -1,4 +1,6 @@
 import { ArrowUp, ArrowDown, Minus, CircleHelp } from 'lucide-react';
+import { useId } from 'react';
+import { ResponsiveContainer, LineChart, Line, Tooltip as RechartsTooltip } from 'recharts';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -8,15 +10,33 @@ interface KPICardProps {
   value: number | string;
   icon: React.ReactNode;
   growth?: number;
-  format?: 'currency' | 'number' | 'decimal';
+  format?: 'currency' | 'number' | 'decimal' | 'percent';
+  growthSuffix?: string;
+  growthFormatter?: (value: number) => string;
+  trendData?: { label: string; value: number }[];
+  trendColor?: string;
   testId?: string;
   description?: string;
 }
 
-export function KPICard({ title, value, icon, growth, format = 'number', testId, description }: KPICardProps) {
+export function KPICard({
+  title,
+  value,
+  icon,
+  growth,
+  format = 'number',
+  growthSuffix = '%',
+  growthFormatter,
+  trendData,
+  trendColor = 'hsl(var(--primary))',
+  testId,
+  description,
+}: KPICardProps) {
+  const sparklineId = useId().replace(/:/g, '');
+
   const formatValue = (val: number | string): string => {
     if (typeof val === 'string') return val;
-    
+
     switch (format) {
       case 'currency':
         return new Intl.NumberFormat('ru-RU', {
@@ -30,6 +50,8 @@ export function KPICard({ title, value, icon, growth, format = 'number', testId,
           minimumFractionDigits: 2,
           maximumFractionDigits: 2,
         }).format(val);
+      case 'percent':
+        return `${val.toFixed(1)}%`;
       default:
         return new Intl.NumberFormat('ru-RU').format(val);
     }
@@ -42,29 +64,36 @@ export function KPICard({ title, value, icon, growth, format = 'number', testId,
     const isNeutral = growth === 0;
 
     const GrowthIcon = isNeutral ? Minus : isPositive ? ArrowUp : ArrowDown;
-    const growthClass = isNeutral 
-      ? 'bg-muted text-muted-foreground' 
-      : isPositive 
-        ? 'bg-chart-2/10 text-chart-2 border-chart-2/20' 
+    const growthClass = isNeutral
+      ? 'bg-muted text-muted-foreground'
+      : isPositive
+        ? 'bg-chart-2/10 text-chart-2 border-chart-2/20'
         : 'bg-destructive/10 text-destructive border-destructive/20';
 
+    const formattedGrowth = growthFormatter
+      ? growthFormatter(growth)
+      : `${Math.abs(growth).toFixed(1)}${growthSuffix}`;
+
     return (
-      <Badge 
-        variant="outline" 
+      <Badge
+        variant="outline"
         className={`gap-1 font-semibold border ${growthClass}`}
         data-testid={`${testId}-growth`}
       >
         <GrowthIcon className="w-3 h-3" />
-        {Math.abs(growth).toFixed(1)}%
+        {formattedGrowth}
       </Badge>
     );
   };
 
   return (
-    <Card className="relative p-6 hover-elevate group transition-all duration-300 border-border/50 shadow-md hover:shadow-xl hover:shadow-primary/10 overflow-hidden h-[180px] flex flex-col" data-testid={testId}>
+    <Card
+      className="relative p-6 hover-elevate group transition-all duration-300 border-border/50 shadow-md hover:shadow-xl hover:shadow-primary/10 overflow-hidden h-[200px] flex flex-col"
+      data-testid={testId}
+    >
       {/* Gradient overlay */}
       <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-transparent opacity-50 group-hover:opacity-70 transition-opacity" />
-      
+
       {/* Content */}
       <div className="relative z-10 flex flex-col flex-1">
         <div className="flex items-start justify-between gap-2 mb-4">
@@ -73,16 +102,22 @@ export function KPICard({ title, value, icon, growth, format = 'number', testId,
           </div>
           {getGrowthBadge()}
         </div>
-        
+
         <div className="space-y-2 flex-1 flex flex-col justify-end">
           <div className="flex items-center gap-2">
-            <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide" data-testid={`${testId}-label`}>
+            <p
+              className="text-sm font-semibold text-muted-foreground uppercase tracking-wide"
+              data-testid={`${testId}-label`}
+            >
               {title}
             </p>
             {description && (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <CircleHelp className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground transition-colors cursor-help" data-testid={`${testId}-info`} />
+                  <CircleHelp
+                    className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground transition-colors cursor-help"
+                    data-testid={`${testId}-info`}
+                  />
                 </TooltipTrigger>
                 <TooltipContent side="top" align="center" sideOffset={5} className="max-w-lg z-50">
                   <p className="text-sm leading-relaxed">{description}</p>
@@ -90,10 +125,39 @@ export function KPICard({ title, value, icon, growth, format = 'number', testId,
               </Tooltip>
             )}
           </div>
-          <p className="text-2xl md:text-3xl font-extrabold font-mono tabular-nums bg-gradient-to-br from-foreground to-foreground/80 bg-clip-text text-transparent" data-testid={`${testId}-value`}>
+          <p
+            className="text-2xl md:text-3xl font-extrabold font-mono tabular-nums bg-gradient-to-br from-foreground to-foreground/80 bg-clip-text text-transparent"
+            data-testid={`${testId}-value`}
+          >
             {formatValue(value)}
           </p>
         </div>
+        {trendData && trendData.length > 1 && (
+          <div className="mt-4 h-[48px]" data-testid={`${testId}-sparkline`}>
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={trendData}>
+                <defs>
+                  <linearGradient id={`sparkline-${sparklineId}`} x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" stopColor={trendColor} stopOpacity={0.35} />
+                    <stop offset="100%" stopColor={trendColor} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <RechartsTooltip
+                  cursor={{ stroke: 'hsl(var(--border) / 0.6)', strokeDasharray: 3 }}
+                  contentStyle={{ display: 'none' }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="value"
+                  stroke={trendColor}
+                  strokeWidth={2.5}
+                  dot={false}
+                  isAnimationActive={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
       </div>
     </Card>
   );

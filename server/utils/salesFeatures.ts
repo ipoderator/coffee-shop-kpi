@@ -88,7 +88,8 @@ function aggregateTransactions(transactions: Transaction[]): AggregationResult {
   const dayMap = new Map<string, { aggregate: DailyAggregate; indices: number[] }>();
 
   transactions.forEach((transaction, index) => {
-    const rawDate = transaction.date instanceof Date ? transaction.date : new Date(transaction.date);
+    const rawDate =
+      transaction.date instanceof Date ? transaction.date : new Date(transaction.date);
     if (!rawDate || Number.isNaN(rawDate.getTime())) {
       return;
     }
@@ -125,7 +126,7 @@ function aggregateTransactions(transactions: Transaction[]): AggregationResult {
     (a, b) => a.aggregate.date.getTime() - b.aggregate.date.getTime(),
   );
 
-  const aggregates = sorted.map(item => item.aggregate);
+  const aggregates = sorted.map((item) => item.aggregate);
   const indexMap = new Map<number, number[]>();
 
   sorted.forEach((item, index) => {
@@ -173,8 +174,7 @@ function stdOfLast(values: number[], window: number): number {
 
   const mean = slice.reduce((acc, value) => acc + value, 0) / slice.length;
   const variance =
-    slice.reduce((acc, value) => acc + (value - mean) * (value - mean), 0) /
-    (slice.length - 1);
+    slice.reduce((acc, value) => acc + (value - mean) * (value - mean), 0) / (slice.length - 1);
 
   return Math.sqrt(Math.max(variance, 0));
 }
@@ -202,15 +202,13 @@ export function engineerDailyFeatures(
     };
   }
 
-  const defaultRevenue =
-    Number.isFinite(options.defaultRevenue ?? undefined)
-      ? Number(options.defaultRevenue)
-      : aggregates.reduce((acc, record) => acc + record.amount, 0) / aggregates.length;
+  const defaultRevenue = Number.isFinite(options.defaultRevenue ?? undefined)
+    ? Number(options.defaultRevenue)
+    : aggregates.reduce((acc, record) => acc + record.amount, 0) / aggregates.length;
 
-  const defaultChecks =
-    Number.isFinite(options.defaultChecks ?? undefined)
-      ? Number(options.defaultChecks)
-      : aggregates.reduce((acc, record) => acc + record.checksCount, 0) / aggregates.length || 1;
+  const defaultChecks = Number.isFinite(options.defaultChecks ?? undefined)
+    ? Number(options.defaultChecks)
+    : aggregates.reduce((acc, record) => acc + record.checksCount, 0) / aggregates.length || 1;
 
   const fallbackRevenue = Number.isFinite(defaultRevenue) ? defaultRevenue : 0;
   const fallbackChecks = Number.isFinite(defaultChecks) && defaultChecks > 0 ? defaultChecks : 1;
@@ -251,10 +249,14 @@ export function engineerDailyFeatures(
 
     const refundRate = safeDivide(record.refundChecksCount, Math.max(checks, 1), 0);
 
-    const revenueLag1 = revenueHistory.length >= 1 ? revenueHistory[revenueHistory.length - 1] : fallbackRevenue;
-    const revenueLag7 = revenueHistory.length >= 7 ? revenueHistory[revenueHistory.length - 7] : fallbackRevenue;
-    const revenueLag14 = revenueHistory.length >= 14 ? revenueHistory[revenueHistory.length - 14] : fallbackRevenue;
-    const revenueLag30 = revenueHistory.length >= 30 ? revenueHistory[revenueHistory.length - 30] : fallbackRevenue;
+    const revenueLag1 =
+      revenueHistory.length >= 1 ? revenueHistory[revenueHistory.length - 1] : fallbackRevenue;
+    const revenueLag7 =
+      revenueHistory.length >= 7 ? revenueHistory[revenueHistory.length - 7] : fallbackRevenue;
+    const revenueLag14 =
+      revenueHistory.length >= 14 ? revenueHistory[revenueHistory.length - 14] : fallbackRevenue;
+    const revenueLag30 =
+      revenueHistory.length >= 30 ? revenueHistory[revenueHistory.length - 30] : fallbackRevenue;
 
     const revenueMean7 = meanOfLast(revenueHistory, 7, fallbackRevenue);
     const revenueMean14 = meanOfLast(revenueHistory, 14, fallbackRevenue);
@@ -270,7 +272,9 @@ export function engineerDailyFeatures(
     const dowStat = dowStats.get(dayOfWeek);
     const dowSeasonality = dowStat ? dowStat.sum / Math.max(dowStat.count, 1) : revenueMean7;
     const monthStat = monthStats.get(month);
-    const monthSeasonality = monthStat ? monthStat.sum / Math.max(monthStat.count, 1) : revenueMean30;
+    const monthSeasonality = monthStat
+      ? monthStat.sum / Math.max(monthStat.count, 1)
+      : revenueMean30;
 
     const dowDeviation = revenueLag1 - dowSeasonality;
     const monthDeviation = revenueLag1 - monthSeasonality;
@@ -319,7 +323,7 @@ export function engineerDailyFeatures(
       cumulativeTrend,
     };
 
-    FEATURE_NAMES.forEach(name => {
+    FEATURE_NAMES.forEach((name) => {
       features[name] = Number.isFinite(featureValues[name]) ? featureValues[name] : 0;
     });
 

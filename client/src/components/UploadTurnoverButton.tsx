@@ -1,13 +1,7 @@
-import { ChangeEvent, useMemo, useState } from "react";
-import { UploadCloud, Loader2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { ChangeEvent, useMemo, useState } from 'react';
+import { UploadCloud, Loader2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Table,
   TableBody,
@@ -15,7 +9,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from '@/components/ui/table';
 
 interface ForecastTurnoverResponse {
   success: boolean;
@@ -42,7 +36,7 @@ export function UploadTurnoverButton() {
 
   const handleUpload = async () => {
     if (!selectedFile) {
-      setError("Пожалуйста, выберите файл Excel с обороткой.");
+      setError('Пожалуйста, выберите файл Excel с обороткой.');
       return;
     }
 
@@ -51,18 +45,18 @@ export function UploadTurnoverButton() {
 
     try {
       const formData = new FormData();
-      formData.append("file", selectedFile);
+      formData.append('file', selectedFile);
 
-      const response = await fetch("/api/ml/forecast-turnover", {
-        method: "POST",
+      const response = await fetch('/api/ml/forecast-turnover', {
+        method: 'POST',
         body: formData,
-        credentials: "include",
+        credentials: 'include',
       });
 
       const payload = (await response.json()) as ForecastTurnoverResponse;
 
       if (!response.ok || !payload.success) {
-        throw new Error(payload.message || "Не удалось получить прогноз.");
+        throw new Error(payload.message || 'Не удалось получить прогноз.');
       }
 
       setPredictions(Array.isArray(payload.predictions) ? payload.predictions : []);
@@ -70,7 +64,7 @@ export function UploadTurnoverButton() {
       const message =
         uploadError instanceof Error
           ? uploadError.message
-          : "Произошла неизвестная ошибка при загрузке файла.";
+          : 'Произошла неизвестная ошибка при загрузке файла.';
       setError(message);
       setPredictions([]);
     } finally {
@@ -117,9 +111,7 @@ export function UploadTurnoverButton() {
               disabled={isUploading}
             />
             {selectedFile && (
-              <span className="text-xs text-muted-foreground">
-                Выбрано: {selectedFile.name}
-              </span>
+              <span className="text-xs text-muted-foreground">Выбрано: {selectedFile.name}</span>
             )}
           </div>
 
@@ -143,37 +135,27 @@ export function UploadTurnoverButton() {
           </Button>
         </div>
 
-        {error && (
-          <p className="text-sm text-destructive">
-            {error}
-          </p>
-        )}
+        {error && <p className="text-sm text-destructive">{error}</p>}
 
         {summary && (
           <div className="grid gap-3 rounded-lg border border-primary/10 bg-muted/30 p-4 text-sm md:grid-cols-4">
             <div>
               <p className="text-muted-foreground">Всего прогноз</p>
-              <p className="text-base font-semibold">
-                {summary.total.toLocaleString("ru-RU")} ₽
-              </p>
+              <p className="text-base font-semibold">{summary.total.toLocaleString('ru-RU')} ₽</p>
             </div>
             <div>
               <p className="text-muted-foreground">Среднее значение</p>
               <p className="text-base font-semibold">
-                {summary.average.toLocaleString("ru-RU", { maximumFractionDigits: 0 })} ₽
+                {summary.average.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} ₽
               </p>
             </div>
             <div>
               <p className="text-muted-foreground">Минимум</p>
-              <p className="text-base font-semibold">
-                {summary.min.toLocaleString("ru-RU")} ₽
-              </p>
+              <p className="text-base font-semibold">{summary.min.toLocaleString('ru-RU')} ₽</p>
             </div>
             <div>
               <p className="text-muted-foreground">Максимум</p>
-              <p className="text-base font-semibold">
-                {summary.max.toLocaleString("ru-RU")} ₽
-              </p>
+              <p className="text-base font-semibold">{summary.max.toLocaleString('ru-RU')} ₽</p>
             </div>
           </div>
         )}
@@ -192,9 +174,7 @@ export function UploadTurnoverButton() {
                 {predictions.map((prediction, index) => (
                   <TableRow key={`${prediction}-${index}`}>
                     <TableCell className="font-medium">Период {index + 1}</TableCell>
-                    <TableCell>
-                      {prediction.toLocaleString("ru-RU")} ₽
-                    </TableCell>
+                    <TableCell>{prediction.toLocaleString('ru-RU')} ₽</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

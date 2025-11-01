@@ -25,7 +25,7 @@ function getYTimesCredentials() {
   return {
     login: requireEnv('YTIMES_LOGIN'),
     account: requireEnv('YTIMES_ACCOUNT'),
-    password: requireEnv('YTIMES_PASSWORD')
+    password: requireEnv('YTIMES_PASSWORD'),
   };
 }
 
@@ -37,7 +37,9 @@ function resolveUploadEndpoint(): string {
 
   const backendUrl = process.env.COFFEE_KPI_BACKEND_URL ?? process.env.COFFEE_KPI_BASE_URL;
   if (!backendUrl) {
-    throw new Error('Set COFFEE_KPI_BACKEND_URL (or COFFEE_KPI_UPLOAD_URL) to enable the fetchShifts plugin');
+    throw new Error(
+      'Set COFFEE_KPI_BACKEND_URL (or COFFEE_KPI_UPLOAD_URL) to enable the fetchShifts plugin',
+    );
   }
 
   try {
@@ -69,7 +71,11 @@ async function fillInput(page: Page, selector: string, value: string, label: str
   await page.type(selector, value, { delay: 50 });
 }
 
-async function waitForDownload(downloadDir: string, trigger: () => Promise<void>, timeoutMs = 120_000) {
+async function waitForDownload(
+  downloadDir: string,
+  trigger: () => Promise<void>,
+  timeoutMs = 120_000,
+) {
   const start = Date.now();
   await fs.mkdir(downloadDir, { recursive: true });
   await trigger();
@@ -104,7 +110,7 @@ async function fetchShiftsReport(): Promise<void> {
   const uploadEndpoint = resolveUploadEndpoint();
   const browser = await puppeteer.launch({
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
   });
 
   try {
@@ -115,7 +121,7 @@ async function fetchShiftsReport(): Promise<void> {
     const client = await page.target().createCDPSession();
     await client.send('Page.setDownloadBehavior', {
       behavior: 'allow',
-      downloadPath: downloadDir
+      downloadPath: downloadDir,
     });
 
     await page.goto(LOGIN_URL, { waitUntil: 'networkidle0' });
@@ -126,7 +132,7 @@ async function fetchShiftsReport(): Promise<void> {
 
     await Promise.all([
       page.waitForNavigation({ waitUntil: 'networkidle0' }),
-      page.click('button[type="submit"], button.btn.btn-primary[type="submit"]')
+      page.click('button[type="submit"], button.btn.btn-primary[type="submit"]'),
     ]);
 
     if (!page.url().startsWith(REPORTS_URL)) {
@@ -146,7 +152,10 @@ async function fetchShiftsReport(): Promise<void> {
     await delay(1_000);
 
     const downloadedReport = await waitForDownload(downloadDir, async () => {
-      const exportIcon = await page.waitForSelector(EXPORT_ICON_SELECTOR, { visible: true, timeout: 20_000 });
+      const exportIcon = await page.waitForSelector(EXPORT_ICON_SELECTOR, {
+        visible: true,
+        timeout: 20_000,
+      });
       if (!exportIcon) {
         throw new Error('Export button was not found on the reports page');
       }
@@ -164,7 +173,7 @@ async function fetchShiftsReport(): Promise<void> {
     const fileBuffer = await fs.readFile(downloadedReport);
     const fileName = path.basename(downloadedReport);
     const fileBlob = new Blob([fileBuffer], {
-      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     });
 
     const formData = new FormData();
@@ -172,7 +181,7 @@ async function fetchShiftsReport(): Promise<void> {
 
     const response = await fetch(uploadEndpoint, {
       method: 'POST',
-      body: formData
+      body: formData,
     });
 
     if (!response.ok) {
@@ -180,7 +189,9 @@ async function fetchShiftsReport(): Promise<void> {
       throw new Error(`Upload failed with status ${response.status}: ${errorBody}`);
     }
 
-    console.info(`[fetchShifts] Uploaded ${fileName} (${fileBuffer.length} bytes) to ${uploadEndpoint}`);
+    console.info(
+      `[fetchShifts] Uploaded ${fileName} (${fileBuffer.length} bytes) to ${uploadEndpoint}`,
+    );
   } catch (error) {
     console.error('[fetchShifts] Job failed:', error);
     throw error;
@@ -199,7 +210,7 @@ function scheduleJob() {
         console.error('[fetchShifts] Scheduled execution failed:', error);
       });
     },
-    { timezone: TIMEZONE }
+    { timezone: TIMEZONE },
   );
 
   console.info(`[fetchShifts] Scheduler initialised for ${CRON_SCHEDULE} (${TIMEZONE})`);
@@ -214,7 +225,7 @@ export async function register(app: Express): Promise<void> {
 
   isRegistered = true;
   app.locals.fetchShifts = {
-    run: fetchShiftsReport
+    run: fetchShiftsReport,
   };
 
   if (process.argv.includes('--run-once')) {

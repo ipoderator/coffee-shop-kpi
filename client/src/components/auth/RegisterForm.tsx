@@ -66,9 +66,7 @@ export function RegisterForm({ onSwitchToLogin }: RegisterFormProps) {
               {...register('name')}
               disabled={isSubmitting || isLoading}
             />
-            {errors.name && (
-              <p className="text-sm text-destructive">{errors.name.message}</p>
-            )}
+            {errors.name && <p className="text-sm text-destructive">{errors.name.message}</p>}
           </div>
 
           <div className="space-y-2">
@@ -80,9 +78,7 @@ export function RegisterForm({ onSwitchToLogin }: RegisterFormProps) {
               {...register('email')}
               disabled={isSubmitting || isLoading}
             />
-            {errors.email && (
-              <p className="text-sm text-destructive">{errors.email.message}</p>
-            )}
+            {errors.email && <p className="text-sm text-destructive">{errors.email.message}</p>}
           </div>
 
           <div className="space-y-2">
@@ -107,11 +103,7 @@ export function RegisterForm({ onSwitchToLogin }: RegisterFormProps) {
                 onClick={() => setShowPassword(!showPassword)}
                 disabled={isSubmitting || isLoading}
               >
-                {showPassword ? (
-                  <EyeOff className="h-4 w-4" />
-                ) : (
-                  <Eye className="h-4 w-4" />
-                )}
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </Button>
             </div>
             {errors.password && (
@@ -142,11 +134,7 @@ export function RegisterForm({ onSwitchToLogin }: RegisterFormProps) {
                 onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                 disabled={isSubmitting || isLoading}
               >
-                {showConfirmPassword ? (
-                  <EyeOff className="h-4 w-4" />
-                ) : (
-                  <Eye className="h-4 w-4" />
-                )}
+                {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </Button>
             </div>
             {errors.confirmPassword && (
@@ -154,14 +142,8 @@ export function RegisterForm({ onSwitchToLogin }: RegisterFormProps) {
             )}
           </div>
 
-          <Button
-            type="submit"
-            className="w-full"
-            disabled={isSubmitting || isLoading}
-          >
-            {(isSubmitting || isLoading) && (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            )}
+          <Button type="submit" className="w-full" disabled={isSubmitting || isLoading}>
+            {(isSubmitting || isLoading) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Зарегистрироваться
           </Button>
 

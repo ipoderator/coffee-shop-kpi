@@ -11,6 +11,7 @@ import {
 import { registerAuthRoutes } from './auth';
 import { registerUploadRoutes } from './upload';
 import { registerAnalyticsRoutes } from './analytics';
+import { registerProfitabilityRoutes } from './profitability';
 import { registerIntegrationRoutes } from './integrations';
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -24,6 +25,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerAuthRoutes(app);
   registerUploadRoutes(app);
   registerAnalyticsRoutes(app);
+  registerProfitabilityRoutes(app);
   registerIntegrationRoutes(app);
 
   const httpServer = createServer(app);

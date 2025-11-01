@@ -32,10 +32,10 @@ export function AnimatedBackground() {
         transition={{
           duration: 20,
           repeat: Infinity,
-          ease: "easeInOut",
+          ease: 'easeInOut',
         }}
       />
-      
+
       <motion.div
         className="absolute bottom-0 left-0 w-96 h-96 bg-gradient-to-tr from-chart-2/30 via-chart-4/20 to-transparent rounded-full blur-3xl"
         animate={{
@@ -46,7 +46,7 @@ export function AnimatedBackground() {
         transition={{
           duration: 25,
           repeat: Infinity,
-          ease: "easeInOut",
+          ease: 'easeInOut',
         }}
       />
 
@@ -59,7 +59,7 @@ export function AnimatedBackground() {
         transition={{
           duration: 30,
           repeat: Infinity,
-          ease: "easeInOut",
+          ease: 'easeInOut',
         }}
       />
 
@@ -83,7 +83,7 @@ export function AnimatedBackground() {
             duration: particle.duration,
             repeat: Infinity,
             delay: particle.delay,
-            ease: "easeInOut",
+            ease: 'easeInOut',
           }}
         />
       ))}
@@ -109,7 +109,7 @@ export function AnimatedBackground() {
               duration: icon.duration,
               repeat: Infinity,
               delay: icon.delay,
-              ease: "easeInOut",
+              ease: 'easeInOut',
             }}
           >
             <Icon className="w-8 h-8" />

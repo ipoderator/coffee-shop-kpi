@@ -44,7 +44,7 @@ export function LogoutButton({ user }: LogoutButtonProps) {
   const getInitials = (name: string) => {
     return name
       .split(' ')
-      .map(word => word.charAt(0))
+      .map((word) => word.charAt(0))
       .join('')
       .toUpperCase()
       .slice(0, 2);
@@ -66,9 +66,7 @@ export function LogoutButton({ user }: LogoutButtonProps) {
           <DropdownMenuLabel className="font-normal">
             <div className="flex flex-col space-y-1">
               <p className="text-sm font-medium leading-none">{user.name}</p>
-              <p className="text-xs leading-none text-muted-foreground">
-                {user.email}
-              </p>
+              <p className="text-xs leading-none text-muted-foreground">{user.email}</p>
             </div>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
@@ -85,7 +83,7 @@ export function LogoutButton({ user }: LogoutButtonProps) {
             <span>Настройки</span>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem 
+          <DropdownMenuItem
             onClick={handleLogout}
             disabled={isLoggingOut || isLoading}
             className="text-destructive focus:text-destructive"
@@ -100,9 +98,7 @@ export function LogoutButton({ user }: LogoutButtonProps) {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Смена пароля</DialogTitle>
-            <DialogDescription>
-              Измените пароль для вашего аккаунта
-            </DialogDescription>
+            <DialogDescription>Измените пароль для вашего аккаунта</DialogDescription>
           </DialogHeader>
           <ChangePasswordForm
             onSuccess={() => setShowChangePassword(false)}

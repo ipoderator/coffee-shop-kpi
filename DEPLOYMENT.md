@@ -3,6 +3,7 @@
 ## 📋 Быстрый старт
 
 ### 1. Системные требования
+
 - **Node.js**: версия 18+ (рекомендуется 20+)
 - **npm**: версия 8+
 - **PostgreSQL**: версия 12+ (для production)
@@ -29,6 +30,7 @@ nano .env
 ```
 
 **Обязательные настройки в .env:**
+
 ```env
 # База данных (ОБЯЗАТЕЛЬНО)
 DATABASE_URL=postgresql://username:password@localhost:5432/coffee_kpi
@@ -63,31 +65,41 @@ npm start
 ## 🔧 Решение проблем
 
 ### Проблема: "Cannot find package 'vite'"
+
 **Решение:**
+
 ```bash
 npm install vite@^5.4.20 --save --force
 ```
 
 ### Проблема: "Cannot find package '@vitejs/plugin-react'"
+
 **Решение:**
+
 ```bash
 npm install "@vitejs/plugin-react@^4.7.0" --save --force
 ```
 
 ### Проблема: "Cannot find module 'autoprefixer'"
+
 **Решение:**
+
 ```bash
 npm install autoprefixer postcss --save --force
 ```
 
 ### Проблема: "Cannot find module '@tailwindcss/typography'"
+
 **Решение:**
+
 ```bash
 npm install "@tailwindcss/typography" --save --force
 ```
 
 ### Проблема: Порт 5000 занят
+
 **Решение:**
+
 ```bash
 # Используйте другой порт
 PORT=3000 npm run dev
@@ -98,6 +110,7 @@ PORT=8080 npm run dev
 ## 🐳 Docker развертывание
 
 ### Dockerfile
+
 ```dockerfile
 FROM node:20-alpine
 
@@ -121,6 +134,7 @@ CMD ["npm", "start"]
 ```
 
 ### docker-compose.yml
+
 ```yaml
 version: '3.8'
 
@@ -128,7 +142,7 @@ services:
   app:
     build: .
     ports:
-      - "3000:3000"
+      - '3000:3000'
     environment:
       - NODE_ENV=production
       - DATABASE_URL=postgresql://postgres:password@db:5432/coffee_kpi
@@ -144,13 +158,14 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - '5432:5432'
 
 volumes:
   postgres_data:
 ```
 
 ### Запуск с Docker
+
 ```bash
 # Сборка и запуск
 docker-compose up --build
@@ -162,6 +177,7 @@ docker-compose up -d --build
 ## 🌐 Production развертывание
 
 ### 1. Подготовка сервера
+
 ```bash
 # Обновление системы
 sudo apt update && sudo apt upgrade -y
@@ -178,6 +194,7 @@ sudo npm install -g pm2
 ```
 
 ### 2. Настройка базы данных
+
 ```bash
 # Создание пользователя и базы данных
 sudo -u postgres psql
@@ -188,6 +205,7 @@ GRANT ALL PRIVILEGES ON DATABASE coffee_kpi TO coffee_user;
 ```
 
 ### 3. Развертывание приложения
+
 ```bash
 # Клонирование репозитория
 git clone <your-repo-url>
@@ -213,6 +231,7 @@ pm2 startup
 ```
 
 ### 4. Настройка Nginx (опционально)
+
 ```nginx
 server {
     listen 80;
@@ -235,6 +254,7 @@ server {
 ## 🔍 Мониторинг и логи
 
 ### PM2 команды
+
 ```bash
 # Просмотр статуса
 pm2 status
@@ -250,6 +270,7 @@ pm2 stop coffee-kpi
 ```
 
 ### Логи приложения
+
 ```bash
 # Логи сервера
 tail -f logs/server.log
@@ -261,6 +282,7 @@ tail -f logs/error.log
 ## 🛠️ Скрипты для автоматизации
 
 ### deploy.sh
+
 ```bash
 #!/bin/bash
 set -e
@@ -302,6 +324,7 @@ echo "🔧 Или в dev режиме: PORT=3000 npm run dev"
 ```
 
 ### health-check.sh
+
 ```bash
 #!/bin/bash
 

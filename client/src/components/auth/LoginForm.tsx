@@ -62,9 +62,7 @@ export function LoginForm({ onSwitchToRegister }: LoginFormProps) {
               {...register('email')}
               disabled={isSubmitting || isLoading}
             />
-            {errors.email && (
-              <p className="text-sm text-destructive">{errors.email.message}</p>
-            )}
+            {errors.email && <p className="text-sm text-destructive">{errors.email.message}</p>}
           </div>
 
           <div className="space-y-2">
@@ -85,11 +83,7 @@ export function LoginForm({ onSwitchToRegister }: LoginFormProps) {
                 onClick={() => setShowPassword(!showPassword)}
                 disabled={isSubmitting || isLoading}
               >
-                {showPassword ? (
-                  <EyeOff className="h-4 w-4" />
-                ) : (
-                  <Eye className="h-4 w-4" />
-                )}
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </Button>
             </div>
             {errors.password && (
@@ -98,14 +92,8 @@ export function LoginForm({ onSwitchToRegister }: LoginFormProps) {
             <PasswordRequirements />
           </div>
 
-          <Button
-            type="submit"
-            className="w-full"
-            disabled={isSubmitting || isLoading}
-          >
-            {(isSubmitting || isLoading) && (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            )}
+          <Button type="submit" className="w-full" disabled={isSubmitting || isLoading}>
+            {(isSubmitting || isLoading) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Войти
           </Button>
 

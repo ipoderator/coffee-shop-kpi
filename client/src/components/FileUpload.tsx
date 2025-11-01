@@ -13,13 +13,16 @@ interface FileUploadProps {
 export function FileUpload({ onFileSelect, isProcessing = false }: FileUploadProps) {
   const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
 
-  const onDrop = useCallback((acceptedFiles: File[]) => {
-    if (acceptedFiles.length > 0) {
-      const file = acceptedFiles[0];
-      setSelectedFileName(file.name);
-      onFileSelect(file);
-    }
-  }, [onFileSelect]);
+  const onDrop = useCallback(
+    (acceptedFiles: File[]) => {
+      if (acceptedFiles.length > 0) {
+        const file = acceptedFiles[0];
+        setSelectedFileName(file.name);
+        onFileSelect(file);
+      }
+    },
+    [onFileSelect],
+  );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -37,23 +40,24 @@ export function FileUpload({ onFileSelect, isProcessing = false }: FileUploadPro
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.6, ease: "easeOut" }}
+      transition={{ duration: 0.6, ease: 'easeOut' }}
     >
       <Card
         {...getRootProps()}
         className={`
           relative overflow-visible cursor-pointer transition-all duration-300
           border-2 border-dashed p-12
-          ${isDragActive 
-            ? 'border-primary bg-gradient-to-br from-primary/20 via-primary/10 to-chart-3/20 shadow-lg shadow-primary/20 scale-105' 
-            : 'border-primary/30 bg-gradient-to-br from-card/50 via-card to-card/50 backdrop-blur-sm hover-elevate'
+          ${
+            isDragActive
+              ? 'border-primary bg-gradient-to-br from-primary/20 via-primary/10 to-chart-3/20 shadow-lg shadow-primary/20 scale-105'
+              : 'border-primary/30 bg-gradient-to-br from-card/50 via-card to-card/50 backdrop-blur-sm hover-elevate'
           }
           ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}
         `}
         data-testid="upload-dropzone"
       >
         <input {...getInputProps()} data-testid="input-file" />
-        
+
         <div className="flex flex-col items-center justify-center gap-6 text-center relative">
           <AnimatePresence mode="wait">
             {isDragActive ? (
@@ -62,12 +66,12 @@ export function FileUpload({ onFileSelect, isProcessing = false }: FileUploadPro
                 initial={{ scale: 0, rotate: -180 }}
                 animate={{ scale: 1, rotate: 0 }}
                 exit={{ scale: 0, rotate: 180 }}
-                transition={{ duration: 0.3, ease: "backOut" }}
+                transition={{ duration: 0.3, ease: 'backOut' }}
                 className="relative"
               >
                 <motion.div
                   animate={{ rotate: 360 }}
-                  transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                  transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
                   className="absolute inset-0 bg-gradient-to-r from-primary/40 to-chart-3/40 rounded-full blur-xl"
                 />
                 <FileUp className="w-20 h-20 text-primary relative z-10" />
@@ -82,26 +86,26 @@ export function FileUpload({ onFileSelect, isProcessing = false }: FileUploadPro
                 className="relative"
               >
                 <motion.div
-                  animate={{ 
+                  animate={{
                     scale: [1, 1.2, 1],
                     opacity: [0.5, 0.8, 0.5],
                   }}
-                  transition={{ 
-                    duration: 3, 
-                    repeat: Infinity, 
-                    ease: "easeInOut" 
+                  transition={{
+                    duration: 3,
+                    repeat: Infinity,
+                    ease: 'easeInOut',
                   }}
                   className="absolute inset-0 bg-gradient-to-r from-primary/30 to-chart-4/30 rounded-full blur-2xl"
                 />
                 <CloudUpload className="w-20 h-20 text-primary relative z-10" />
                 <motion.div
-                  animate={{ 
+                  animate={{
                     y: [0, -10, 0],
                   }}
-                  transition={{ 
-                    duration: 2, 
-                    repeat: Infinity, 
-                    ease: "easeInOut" 
+                  transition={{
+                    duration: 2,
+                    repeat: Infinity,
+                    ease: 'easeInOut',
                   }}
                   className="absolute -top-2 -right-2"
                 >
@@ -110,8 +114,8 @@ export function FileUpload({ onFileSelect, isProcessing = false }: FileUploadPro
               </motion.div>
             )}
           </AnimatePresence>
-          
-          <motion.div 
+
+          <motion.div
             className="space-y-3"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -125,7 +129,7 @@ export function FileUpload({ onFileSelect, isProcessing = false }: FileUploadPro
             </p>
           </motion.div>
 
-          <motion.div 
+          <motion.div
             className="flex gap-2 flex-wrap justify-center"
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -136,12 +140,12 @@ export function FileUpload({ onFileSelect, isProcessing = false }: FileUploadPro
                 key={format}
                 initial={{ opacity: 0, scale: 0 }}
                 animate={{ opacity: 1, scale: 1 }}
-                transition={{ delay: 0.4 + index * 0.1, type: "spring" }}
+                transition={{ delay: 0.4 + index * 0.1, type: 'spring' }}
                 whileHover={{ scale: 1.1 }}
               >
-                <Badge 
-                  variant="secondary" 
-                  className="font-mono text-xs px-3 py-1 bg-gradient-to-r from-primary/10 to-chart-3/10 border-primary/20" 
+                <Badge
+                  variant="secondary"
+                  className="font-mono text-xs px-3 py-1 bg-gradient-to-r from-primary/10 to-chart-3/10 border-primary/20"
                   data-testid={`badge-format-${format.replace('.', '')}`}
                 >
                   {format}
@@ -173,7 +177,7 @@ export function FileUpload({ onFileSelect, isProcessing = false }: FileUploadPro
               >
                 <motion.div
                   animate={{ rotate: 360 }}
-                  transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                  transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
                   className="w-5 h-5 border-3 border-current border-t-transparent rounded-full"
                 />
                 <span className="text-sm font-semibold">Обработка файла...</span>

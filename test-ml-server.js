@@ -31,23 +31,23 @@ app.get('/api/analytics/test', async (req, res) => {
   try {
     // Инициализируем ML движок
     const mlEngine = new SimpleMLForecastingEngine(testTransactions);
-    
+
     // Генерируем прогноз
     const forecast = await mlEngine.generateMLForecast(7);
-    
+
     // Получаем информацию о сегментах
     const segments = mlEngine.getSegmentsInfo();
-    
+
     // Рассчитываем KPI
     const totalRevenue = testTransactions.reduce((sum, t) => sum + t.amount, 0);
     const totalChecks = testTransactions.length;
     const averageCheck = totalRevenue / totalChecks;
-    
+
     const response = {
       kpi: {
         totalRevenue,
         averageCheck,
-        totalChecks
+        totalChecks,
       },
       daily: [],
       monthly: [],
@@ -57,18 +57,21 @@ app.get('/api/analytics/test', async (req, res) => {
         nextMonth: {
           predictedRevenue: forecast.reduce((sum, day) => sum + day.predictedRevenue, 0),
           confidence: forecast.reduce((sum, day) => sum + day.confidence, 0) / forecast.length,
-          dailyForecast: forecast
+          dailyForecast: forecast,
         },
         extendedForecast: {
           totalPredictedRevenue: forecast.reduce((sum, day) => sum + day.predictedRevenue, 0),
-          averageConfidence: forecast.reduce((sum, day) => sum + day.confidence, 0) / forecast.length,
+          averageConfidence:
+            forecast.reduce((sum, day) => sum + day.confidence, 0) / forecast.length,
           dailyForecast: forecast,
-          weeklyForecast: [{
-            weekNumber: 1,
-            predictedRevenue: forecast.reduce((sum, day) => sum + day.predictedRevenue, 0),
-            confidence: forecast.reduce((sum, day) => sum + day.confidence, 0) / forecast.length
-          }],
-          monthlyForecast: []
+          weeklyForecast: [
+            {
+              weekNumber: 1,
+              predictedRevenue: forecast.reduce((sum, day) => sum + day.predictedRevenue, 0),
+              confidence: forecast.reduce((sum, day) => sum + day.confidence, 0) / forecast.length,
+            },
+          ],
+          monthlyForecast: [],
         },
         methodology: {
           algorithm: 'ML Ensemble (ARIMA + Prophet + LSTM) with Customer & Product Segmentation',
@@ -82,12 +85,12 @@ app.get('/api/analytics/test', async (req, res) => {
           historicalPatternAnalysis: true,
           economicCycleAnalysis: true,
           localEventAnalysis: true,
-          customerBehaviorAnalysis: true
-        }
+          customerBehaviorAnalysis: true,
+        },
       },
-      segments: segments
+      segments: segments,
     };
-    
+
     res.json(response);
   } catch (error) {
     console.error('Error generating ML forecast:', error);

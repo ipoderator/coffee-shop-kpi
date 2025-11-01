@@ -2,7 +2,11 @@ import type { Express } from 'express';
 import path from 'node:path';
 import multer from 'multer';
 import { requireAuthAny } from '../utils/auth';
-import { getTrainingFileFieldName, trainSalesModelFromExcel, TrainingError } from '../utils/training';
+import {
+  getTrainingFileFieldName,
+  trainSalesModelFromExcel,
+  TrainingError,
+} from '../utils/training';
 
 const integrationTrainingUpload = multer({
   storage: multer.memoryStorage(),
@@ -42,7 +46,7 @@ export function registerIntegrationRoutes(app: Express): void {
     '/api/integrations/train-sales-model',
     requireAuthAny,
     (req, res, next) => {
-      integrationTrainingUpload.single(getTrainingFileFieldName())(req, res, err => {
+      integrationTrainingUpload.single(getTrainingFileFieldName())(req, res, (err) => {
         if (err) {
           console.error('Integration training upload error:', err);
           if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {

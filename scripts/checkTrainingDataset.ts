@@ -17,7 +17,7 @@ async function main(): Promise<void> {
   console.log(`Parsed rows: ${parseResult.rows.length}`);
   console.log('Detected columns:', parseResult.columnsDetected);
 
-  const sample = parseResult.rows.slice(0, 3).map(row => ({
+  const sample = parseResult.rows.slice(0, 3).map((row) => ({
     date: row.date.toISOString().slice(0, 10),
     amount: row.amount,
     cashPayment: row.cashPayment,

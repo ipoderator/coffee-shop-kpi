@@ -110,7 +110,9 @@ function parseArgs(argv: string[]): ParsedArgs {
   return args;
 }
 
-function buildTransactions(rows: Awaited<ReturnType<typeof parseExcelFile>>['rows']): Transaction[] {
+function buildTransactions(
+  rows: Awaited<ReturnType<typeof parseExcelFile>>['rows'],
+): Transaction[] {
   const transactions: Transaction[] = [];
 
   rows.forEach((row, index) => {
@@ -130,6 +132,7 @@ function buildTransactions(rows: Awaited<ReturnType<typeof parseExcelFile>>['row
       year: row.year ?? date.getFullYear(),
       month: row.month ?? date.getMonth() + 1,
       amount,
+      costOfGoods: row.costOfGoods ?? null,
       checksCount: row.checksCount ?? 1,
       cashPayment: row.cashPayment ?? 0,
       terminalPayment: row.terminalPayment ?? 0,
@@ -158,7 +161,7 @@ function computeFeatureStatistics(featureMaps: Record<string, number>[]): {
   const sumsOfSquares = new Map<string, number>();
   const counts = new Map<string, number>();
 
-  featureMaps.forEach(map => {
+  featureMaps.forEach((map) => {
     Object.entries(map).forEach(([key, value]) => {
       const numericValue = Number.isFinite(value) ? value : 0;
       sums.set(key, (sums.get(key) ?? 0) + numericValue);
@@ -243,7 +246,7 @@ function multiplyMatrices(a: number[][], b: number[][]): number[][] {
 }
 
 function multiplyMatrixVector(matrix: number[][], vector: number[]): number[] {
-  return matrix.map(row => row.reduce((sum, value, index) => sum + value * vector[index], 0));
+  return matrix.map((row) => row.reduce((sum, value, index) => sum + value * vector[index], 0));
 }
 
 function solveLinearSystem(matrix: number[][], vector: number[]): number[] {
@@ -287,10 +290,14 @@ function solveLinearSystem(matrix: number[][], vector: number[]): number[] {
     }
   }
 
-  return augmented.map(row => row[size]);
+  return augmented.map((row) => row[size]);
 }
 
-function trainModel(featureMaps: Record<string, number>[], targets: number[], lambda: number): TrainingResult {
+function trainModel(
+  featureMaps: Record<string, number>[],
+  targets: number[],
+  lambda: number,
+): TrainingResult {
   if (featureMaps.length === 0) {
     throw new Error('No data available for training.');
   }
@@ -325,8 +332,8 @@ function trainModel(featureMaps: Record<string, number>[], targets: number[], la
     };
   }
 
-  const designMatrix = featureMaps.map(map => {
-    return featureNames.map(name => {
+  const designMatrix = featureMaps.map((map) => {
+    return featureNames.map((name) => {
       const value = map[name] ?? 0;
       const mean = means[name] ?? 0;
       const stdCandidate = stds[name];
@@ -358,9 +365,9 @@ function trainModel(featureMaps: Record<string, number>[], targets: number[], la
     coefficients[name] = beta[index + 1] ?? 0;
   });
 
-  const predictions = featureMaps.map(map => {
+  const predictions = featureMaps.map((map) => {
     let prediction = intercept;
-    featureNames.forEach(name => {
+    featureNames.forEach((name) => {
       const coefficient = coefficients[name] ?? 0;
       const mean = means[name] ?? 0;
       const stdCandidate = stds[name];
@@ -417,7 +424,9 @@ async function main(): Promise<void> {
 
     const inputPath = path.resolve(process.cwd(), args.inputPath);
     const outputPath = path.resolve(
-      args.outputPath ? path.resolve(process.cwd(), args.outputPath) : path.join(projectRoot, 'server', 'models', 'salesModel.json'),
+      args.outputPath
+        ? path.resolve(process.cwd(), args.outputPath)
+        : path.join(projectRoot, 'server', 'models', 'salesModel.json'),
     );
 
     const buffer = await readFile(inputPath);
@@ -447,7 +456,9 @@ async function main(): Promise<void> {
     const targetMean = computeMean(featureEngineering.targets);
     const computedTargetStd = computeStd(featureEngineering.targets, targetMean);
     const targetStd = computedTargetStd > 1e-6 ? computedTargetStd : 1e-6;
-    const checksMean = computeMean(featureEngineering.aggregates.map(record => record.checksCount ?? 0));
+    const checksMean = computeMean(
+      featureEngineering.aggregates.map((record) => record.checksCount ?? 0),
+    );
 
     const enhancedModel: SalesModel = {
       ...model,
