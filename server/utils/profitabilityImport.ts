@@ -139,6 +139,7 @@ type DetailedColumnKey = keyof typeof DETAILED_COLUMN_MAPPINGS;
 type HeaderKey = keyof typeof PROFITABILITY_COLUMNS;
 
 const REQUIRED_HEADER_KEYS: HeaderKey[] = ['reportDate', 'cashIncome', 'cashlessIncome'];
+const DETAILED_REQUIRED_HEADER_KEYS: DetailedColumnKey[] = ['shiftDate', 'checkNumber', 'amount'];
 const MAX_HEADER_SCAN_ROWS = 30;
 
 const FIELD_LABELS: Record<HeaderKey, string> = {
@@ -226,7 +227,7 @@ function findHeaderRow(rows: (string | number | null)[][]): { index: number; hea
       continue;
     }
 
-    const hasRequired = REQUIRED_HEADER_KEYS.every((key) => {
+    const hasSummaryRequired = REQUIRED_HEADER_KEYS.every((key) => {
       const config = HEADER_CONFIG[key];
       const candidates = [config.canonical, ...config.aliases].filter(Boolean);
       return candidates.some((candidate) =>
@@ -234,7 +235,11 @@ function findHeaderRow(rows: (string | number | null)[][]): { index: number; hea
       );
     });
 
-    if (hasRequired) {
+    const hasDetailedRequired = DETAILED_REQUIRED_HEADER_KEYS.every(
+      (key) => detectDetailedColumn(headers, DETAILED_COLUMN_MAPPINGS[key]) !== undefined,
+    );
+
+    if (hasSummaryRequired || hasDetailedRequired) {
       return { index: i, headers };
     }
   }
