@@ -140,6 +140,12 @@ export function useAuth(): AuthContextType {
         isAuthenticated: !!data.user,
       });
       queryClient.invalidateQueries({ queryKey: ['auth'] });
+      
+      // Сохраняем email последнего пользователя в localStorage
+      if (data.user?.email) {
+        localStorage.setItem('coffee-kpi-last-email', data.user.email);
+      }
+      
       toast({
         title: 'Успешный вход',
         description: data.message || 'Добро пожаловать!',
@@ -166,6 +172,12 @@ export function useAuth(): AuthContextType {
         isAuthenticated: !!data.user,
       });
       queryClient.invalidateQueries({ queryKey: ['auth'] });
+      
+      // Сохраняем email последнего пользователя в localStorage
+      if (data.user?.email) {
+        localStorage.setItem('coffee-kpi-last-email', data.user.email);
+      }
+      
       toast({
         title: 'Успешная регистрация',
         description: data.message || 'Добро пожаловать!',
@@ -192,6 +204,7 @@ export function useAuth(): AuthContextType {
         isAuthenticated: false,
       });
       queryClient.clear();
+      // Не удаляем email из localStorage при выходе, чтобы пользователь мог легко войти снова
       toast({
         title: 'Выход выполнен',
         description: 'Вы успешно вышли из системы',
@@ -239,6 +252,11 @@ export function useAuth(): AuthContextType {
         isLoading: false,
         isAuthenticated: true,
       });
+      
+      // Сохраняем email последнего пользователя в localStorage при автоматической загрузке
+      if (userData.user?.email) {
+        localStorage.setItem('coffee-kpi-last-email', userData.user.email);
+      }
     } else if (error instanceof Error && error.message === 'Unauthorized') {
       setAuthState({
         user: null,

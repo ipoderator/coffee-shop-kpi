@@ -20,10 +20,24 @@ export function log(message: string, source = 'express') {
 }
 
 export async function setupVite(app: Express, server: Server) {
+  const isDev = process.env.NODE_ENV === 'development' || !process.env.NODE_ENV;
+  const port = parseInt(process.env.PORT || '5001', 10);
+  
   const serverOptions = {
     middlewareMode: true,
-    hmr: { server },
+    hmr: { 
+      server,
+      // Настройки HMR для локальной разработки
+      protocol: isDev ? 'ws' : 'wss',
+      host: isDev ? 'localhost' : undefined,
+      port: isDev ? port : undefined,
+    },
     allowedHosts: true as const,
+    // Включаем watch для отслеживания изменений
+    watch: {
+      usePolling: false,
+      ignored: ['**/node_modules/**', '**/dist/**'],
+    },
   };
 
   const vite = await createViteServer({
@@ -33,7 +47,10 @@ export async function setupVite(app: Express, server: Server) {
       ...viteLogger,
       error: (msg, options) => {
         viteLogger.error(msg, options);
-        process.exit(1);
+        // Не завершаем процесс при ошибках в dev режиме для более стабильной работы
+        if (!isDev) {
+          process.exit(1);
+        }
       },
     },
     server: serverOptions,
@@ -52,9 +69,14 @@ export async function setupVite(app: Express, server: Server) {
     try {
       const clientTemplate = path.resolve(import.meta.dirname, '..', 'client', 'index.html');
 
-      // always reload the index.html file from disk incase it changes
+      // В dev режиме всегда перечитываем template для поддержки HMR
       let template = await fs.promises.readFile(clientTemplate, 'utf-8');
-      template = template.replace(`src="/src/main.tsx"`, `src="/src/main.tsx?v=${nanoid()}"`);
+      // В dev режиме не добавляем cache busting, чтобы не ломать HMR
+      if (isDev) {
+        template = template.replace(`src="/src/main.tsx"`, `src="/src/main.tsx"`);
+      } else {
+        template = template.replace(`src="/src/main.tsx"`, `src="/src/main.tsx?v=${nanoid()}"`);
+      }
       const page = await vite.transformIndexHtml(url, template);
       res.status(200).set({ 'Content-Type': 'text/html' }).end(page);
     } catch (e) {

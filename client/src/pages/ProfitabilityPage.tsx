@@ -16,6 +16,7 @@ import {
   ProfitabilityDatasetInfo,
   ProfitabilityImportLogEntry,
   ProfitabilityUploadResponse,
+  TopProductsResponse,
 } from '@shared/schema';
 import { FileUpload } from '@/components/FileUpload';
 import { Card } from '@/components/ui/card';
@@ -40,19 +41,24 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { ProfitabilityTrendChart } from '@/components/ProfitabilityTrendChart';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { DateRange } from 'react-day-picker';
+import { TopProductsVisualization } from '@/components/TopProductsVisualization';
 
-const formatCurrency = (value: number) =>
-  new Intl.NumberFormat('ru-RU', {
+const formatCurrency = (value: number) => {
+  if (!Number.isFinite(value)) return '0 ₽';
+  return new Intl.NumberFormat('ru-RU', {
     style: 'currency',
     currency: 'RUB',
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   }).format(value);
+};
 
-const formatPercent = (value: number) => `${(value * 100).toFixed(1)}%`;
+const formatPercent = (value: number) => {
+  if (!Number.isFinite(value)) return '0%';
+  return `${(value * 100).toFixed(1)}%`;
+};
 
 function getInitialRange(): DateRange | undefined {
   const stored = localStorage.getItem('profitability-date-range');
@@ -80,6 +86,7 @@ export default function ProfitabilityPage() {
   const [exporting, setExporting] = useState<'csv' | 'pdf' | null>(null);
   const [activeTab, setActiveTab] = useState<'import' | 'kpi' | 'tables'>('import');
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
+  const [productsView, setProductsView] = useState<'top' | 'bottom'>('top');
 
   const datasetsQuery = useQuery({
     queryKey: ['profitability', 'datasets'],
@@ -118,6 +125,8 @@ export default function ProfitabilityPage() {
         const fallbackId = datasetsQuery.data[0].id;
         setSelectedDatasetId(fallbackId);
         localStorage.setItem('profitability-dataset-id', fallbackId);
+        // Инвалидируем кеш для обновления данных
+        queryClient.invalidateQueries({ queryKey: ['profitability', 'top-products'] });
       }
       return;
     }
@@ -125,7 +134,9 @@ export default function ProfitabilityPage() {
     const firstId = datasetsQuery.data[0].id;
     setSelectedDatasetId(firstId);
     localStorage.setItem('profitability-dataset-id', firstId);
-  }, [datasetsQuery.data, selectedDatasetId]);
+    // Инвалидируем кеш для обновления данных
+    queryClient.invalidateQueries({ queryKey: ['profitability', 'top-products'] });
+  }, [datasetsQuery.data, selectedDatasetId, queryClient]);
 
   useEffect(() => {
     if (dateRange?.from || dateRange?.to) {
@@ -172,7 +183,39 @@ export default function ProfitabilityPage() {
     },
   });
 
+  const topProductsQuery = useQuery({
+    queryKey: [
+      'profitability',
+      'top-products',
+      selectedDatasetId,
+      dateRange?.from?.toISOString(),
+      dateRange?.to?.toISOString(),
+    ],
+    enabled: Boolean(selectedDatasetId),
+    queryFn: async (): Promise<TopProductsResponse> => {
+      if (!selectedDatasetId) {
+        throw new Error('Набор данных не выбран');
+      }
+
+      const params = new URLSearchParams();
+      if (dateRange?.from) {
+        params.set('from', dateRange.from.toISOString());
+      }
+      if (dateRange?.to) {
+        params.set('to', dateRange.to.toISOString());
+      }
+
+      const suffix = params.size > 0 ? `?${params.toString()}` : '';
+      const res = await fetch(`/api/profitability/${selectedDatasetId}/top-products${suffix}`);
+      if (!res.ok) {
+        throw new Error('Не удалось получить топ-5 позиций');
+      }
+      return (await res.json()) as TopProductsResponse;
+    },
+  });
+
   const analytics = analyticsQuery.data;
+  const topProductsData = topProductsQuery.data;
   const datasets = datasetsQuery.data ?? [];
   const logs = importLogsQuery.data ?? [];
 
@@ -713,100 +756,374 @@ export default function ProfitabilityPage() {
             </Card>
           )}
 
-          {analytics && (
+              {analytics && (
             <>
-              <motion.div
-                className="flex flex-col lg:flex-row lg:items-center justify-between gap-4"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.1 }}
-              >
-                <div>
-                  <h2 className="text-2xl font-bold">Ключевые показатели</h2>
-                  <p className="text-muted-foreground text-sm">
-                    Период: {new Date(analytics.period.from).toLocaleDateString('ru-RU')} —{' '}
-                    {new Date(analytics.period.to).toLocaleDateString('ru-RU')}
-                  </p>
-                </div>
-              </motion.div>
-
-              <motion.div
-                className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.15 }}
-              >
-                <StatCard
-                  title="Чистая выручка"
-                  value={formatCurrency(analytics.kpi.netRevenue)}
-                  icon={<TrendingUp className="w-5 h-5 text-chart-2" />}
-                  testId="profitability-net-revenue"
-                />
-                <StatCard
-                  title="Валовая выручка"
-                  value={formatCurrency(analytics.kpi.grossRevenue)}
-                  icon={<Wallet className="w-5 h-5 text-primary" />}
-                  testId="profitability-gross-revenue"
-                />
-                <StatCard
-                  title="Доля возвратов"
-                  value={formatPercent(analytics.kpi.returnRate)}
-                  icon={<TrendingDown className="w-5 h-5 text-destructive" />}
-                  testId="profitability-return-rate"
-                />
-                <StatCard
-                  title="Средний чек"
-                  value={formatCurrency(analytics.kpi.averageCheck)}
-                  icon={<TrendingUp className="w-5 h-5 text-chart-3" />}
-                  testId="profitability-average-check"
-                />
-              </motion.div>
-
-              <motion.div
-                className="grid grid-cols-1 xl:grid-cols-[2.5fr_1.5fr] gap-6"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.2 }}
-              >
-                <ProfitabilityTrendChart data={chartData} />
-
-                <Card className="p-6 space-y-3">
-                  <h3 className="text-lg font-semibold">Структура платежей</h3>
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">Наличные</span>
-                      <span className="font-semibold">
-                        {formatPercent(analytics.kpi.cashShare)}
-                      </span>
-                    </div>
-                    <div className="h-2 rounded-full bg-muted overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-primary"
-                        style={{ width: `${analytics.kpi.cashShare * 100}%` }}
-                      />
-                    </div>
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">Безналичные</span>
-                      <span className="font-semibold">
-                        {formatPercent(analytics.kpi.cashlessShare)}
-                      </span>
-                    </div>
-                    <div className="h-2 rounded-full bg-muted overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-chart-3"
-                        style={{ width: `${analytics.kpi.cashlessShare * 100}%` }}
-                      />
+              {/* Итоги периода в хедере */}
+              {topProductsData && (
+                <motion.div
+                  className="space-y-3"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.05 }}
+                >
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                    <div>
+                      <h2 className="text-2xl font-bold">Итоги периода</h2>
+                      <p className="text-muted-foreground text-sm">
+                        Период: {new Date(analytics.period.from).toLocaleDateString('ru-RU')} —{' '}
+                        {new Date(analytics.period.to).toLocaleDateString('ru-RU')}
+                      </p>
                     </div>
                   </div>
-                  <div className="pt-4 border-t border-border/50">
-                    <p className="text-sm text-muted-foreground">Возвраты</p>
-                    <p className="text-lg font-semibold">{formatCurrency(analytics.kpi.returns)}</p>
-                    <p className="text-sm text-muted-foreground">
-                      Коррекции: {formatCurrency(analytics.kpi.corrections)}
+
+                  {/* Основные метрики в одном ряду */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                    <StatCard
+                      title="Выручка"
+                      value={formatCurrency(topProductsData.periodSummary.netRevenue)}
+                      icon={<TrendingUp className="w-5 h-5 text-chart-2" />}
+                      testId="period-summary-revenue"
+                    />
+                    <StatCard
+                      title="Себестоимость (COGS)"
+                      value={formatCurrency(topProductsData.periodSummary.cogs)}
+                      icon={<Wallet className="w-5 h-5 text-primary" />}
+                      testId="period-summary-cogs"
+                    />
+                    <StatCard
+                      title="Валовая прибыль"
+                      value={formatCurrency(topProductsData.periodSummary.grossProfit)}
+                      icon={<TrendingUp className="w-5 h-5 text-chart-3" />}
+                      testId="period-summary-profit"
+                    />
+                    <StatCard
+                      title="Валовая маржа"
+                      value={formatPercent(topProductsData.periodSummary.grossMargin / 100)}
+                      icon={<TrendingUp className="w-5 h-5 text-emerald-600" />}
+                      testId="period-summary-margin"
+                    />
+                  </div>
+
+                </motion.div>
+              )}
+
+              {/* Top-5 / Bottom-5 позиций */}
+              {topProductsData && (
+                <motion.div
+                  className="mt-6"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.15 }}
+                >
+                  <Card className="p-6">
+                    <div className="flex items-start justify-between mb-6">
+                      <div className="flex-1">
+                        <h3 className="text-xl font-semibold mb-2">
+                          {productsView === 'top' 
+                            ? 'Топ-5 самых популярных позиций' 
+                            : 'Позиции с наименьшей маржой'}
+                        </h3>
+                        <p className="text-sm text-muted-foreground">
+                          {productsView === 'bottom' 
+                            ? 'Позиции с самой низкой валовой маржой прибыли. Отображаются только позиции, которые были проданы более 10 раз за выбранный период.'
+                            : 'Самые популярные позиции, отсортированные по количеству продаж за период'}
+                        </p>
+                        {(dateRange?.from || dateRange?.to) && (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Период: {dateRange.from
+                              ? `${dateRange.from.toLocaleDateString('ru-RU')} ${
+                                  dateRange.to ? `— ${dateRange.to.toLocaleDateString('ru-RU')}` : ''
+                                }`
+                              : dateRange.to
+                              ? `до ${dateRange.to.toLocaleDateString('ru-RU')}`
+                              : 'Все данные'}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex gap-2 ml-4">
+                        <Button
+                          variant={productsView === 'top' ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => setProductsView('top')}
+                        >
+                          Популярные
+                        </Button>
+                        <Button
+                          variant={productsView === 'bottom' ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => setProductsView('bottom')}
+                        >
+                          Низкая маржа
+                        </Button>
+                      </div>
+                    </div>
+                    {(productsView === 'top' ? topProductsData.products : topProductsData.bottomProducts).length > 0 ? (
+                      <>
+                        {/* Графики визуализации */}
+                        <div className="mb-6">
+                          <TopProductsVisualization
+                            products={productsView === 'top' ? topProductsData.products : topProductsData.bottomProducts}
+                            viewType={productsView}
+                          />
+                        </div>
+
+                        {/* Таблица с данными */}
+                        <div className="overflow-x-auto">
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>Наименование</TableHead>
+                                <TableHead className="text-right">Кол-во продаж</TableHead>
+                                <TableHead className="text-right">Себестоимость (за ед.)</TableHead>
+                                <TableHead className="text-right">Средняя цена (за ед.)</TableHead>
+                                <TableHead className="text-right">Прибыль (за ед.)</TableHead>
+                                <TableHead className="text-right">Маржа (%)</TableHead>
+                                <TableHead className="text-right">Совокупная прибыль</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {(productsView === 'top' ? topProductsData.products : topProductsData.bottomProducts).map((product, index) => (
+                                <TableRow key={index}>
+                                  <TableCell className="font-medium">{product.itemName}</TableCell>
+                                  <TableCell className="text-right">
+                                    <Badge variant="secondary" className="font-mono">
+                                      {product.salesCount ?? 0}
+                                    </Badge>
+                                  </TableCell>
+                                  <TableCell className="text-right">{formatCurrency(product.unitCost)}</TableCell>
+                                  <TableCell className="text-right">{formatCurrency(product.averagePrice)}</TableCell>
+                                  <TableCell className={`text-right ${productsView === 'bottom' && product.averageProfit < 0 ? 'text-destructive' : ''}`}>
+                                    {formatCurrency(product.averageProfit)}
+                                  </TableCell>
+                                  <TableCell className={`text-right ${productsView === 'bottom' && product.averageMargin < 0 ? 'text-destructive' : ''}`}>
+                                    {formatPercent(product.averageMargin / 100)}
+                                  </TableCell>
+                                  <TableCell className={`text-right font-semibold ${productsView === 'bottom' && product.totalProfit < 0 ? 'text-destructive' : ''}`}>
+                                    {formatCurrency(product.totalProfit)}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="text-center py-8">
+                        <p className="text-sm text-muted-foreground mb-2">
+                          {productsView === 'bottom' 
+                            ? 'Нет позиций с низкой маржой для отображения' 
+                            : 'Нет данных для отображения'}
+                        </p>
+                        {productsView === 'bottom' && (
+                          <p className="text-xs text-muted-foreground">
+                            Для отображения позиций с низкой маржой необходимо, чтобы они были проданы более 10 раз за выбранный период. Попробуйте выбрать другой период или убедитесь, что в данных есть такие позиции.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </Card>
+                </motion.div>
+              )}
+
+              {/* Негативная маржа */}
+              {topProductsData && topProductsData.negativeMarginProducts.length > 0 && (
+                <motion.div
+                  className="mt-6"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.2 }}
+                >
+                  <Card className="p-6 border-2 border-destructive/20 bg-destructive/5">
+                    <h3 className="text-lg font-semibold mb-4 text-destructive">
+                      Негативная маржа (GP &lt; 0)
+                    </h3>
+                    <p className="text-sm text-muted-foreground mb-4">
+                      Позиции с отрицательной валовой прибылью. Проверьте цены, себестоимость или акции.
                     </p>
+                    <div className="overflow-x-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Наименование</TableHead>
+                            <TableHead className="text-right">Себестоимость (за ед.)</TableHead>
+                            <TableHead className="text-right">Средняя цена (за ед.)</TableHead>
+                            <TableHead className="text-right">Прибыль (за ед.)</TableHead>
+                            <TableHead className="text-right">Маржа (%)</TableHead>
+                            <TableHead className="text-right">Совокупная прибыль</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {topProductsData.negativeMarginProducts.map((product, index) => (
+                            <TableRow key={index}>
+                              <TableCell className="font-medium">{product.itemName}</TableCell>
+                              <TableCell className="text-right">{formatCurrency(product.unitCost)}</TableCell>
+                              <TableCell className="text-right">{formatCurrency(product.averagePrice)}</TableCell>
+                              <TableCell className="text-right text-destructive">{formatCurrency(product.averageProfit)}</TableCell>
+                              <TableCell className="text-right text-destructive">{formatPercent(product.averageMargin / 100)}</TableCell>
+                              <TableCell className="text-right font-semibold text-destructive">{formatCurrency(product.totalProfit)}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </Card>
+                </motion.div>
+              )}
+
+              {/* Справочно: детализация выручки */}
+              {topProductsData && (
+                <motion.div
+                  className="mt-2"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.1 }}
+                >
+                  <div className="text-xs text-muted-foreground border-t border-border/50 pt-3">
+                    <span className="font-semibold text-foreground">Справочно:</span>{' '}
+                    <span>Скидки за период: {formatCurrency(topProductsData.periodSummary.totalDiscounts ?? 0)}</span>
+                    {' · '}
+                    <span>
+                      Списано бонусов: {formatCurrency(topProductsData.periodSummary.totalBonuses ?? 0)}
+                      {' '}
+                      ({((topProductsData.periodSummary.bonusesPercent ?? 0)).toFixed(1)}%)
+                    </span>
+                    {' · '}
+                    <span>Возвраты: {formatCurrency(analytics.kpi.returns)}</span>
+                    {' · '}
+                    <span>Коррекции: {formatCurrency(analytics.kpi.corrections)}</span>
                   </div>
-                </Card>
-              </motion.div>
+                </motion.div>
+              )}
+
+              {/* Карточка потерь от скидок и бонусов */}
+              {topProductsData && (
+                <motion.div
+                  className="mt-6"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.15 }}
+                >
+                  <Card className="p-6 border-2 border-amber-500/30 bg-gradient-to-br from-amber-50/50 to-orange-50/50 dark:from-amber-950/20 dark:to-orange-950/20">
+                    <div className="flex items-start justify-between mb-4">
+                      <div>
+                        <h3 className="text-lg font-semibold text-amber-900 dark:text-amber-100 mb-1">
+                          Потери от скидок и бонусов
+                        </h3>
+                        <p className="text-sm text-muted-foreground">
+                          Общие потери от применения скидок и списания бонусов за период.
+                          Бонусы рассчитаны как разница между суммой всех значений столбца "цена" и суммой всех значений столбца "цена со скидкой".
+                        </p>
+                      </div>
+                      <TrendingDown className="w-6 h-6 text-amber-600 dark:text-amber-400" />
+                    </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
+                      {/* Общие потери */}
+                      <div className="space-y-3 p-4 bg-white/50 dark:bg-gray-900/30 rounded-lg border border-amber-200/50 dark:border-amber-800/50">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium text-muted-foreground">Общие потери</span>
+                        </div>
+                        <div className="space-y-1">
+                          <div className="text-3xl font-bold text-amber-700 dark:text-amber-300">
+                            {formatCurrency(topProductsData.periodSummary.totalLosses ?? 0)}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-muted-foreground">От выручки:</span>
+                            <span className="text-sm font-semibold text-amber-700 dark:text-amber-300">
+                              {((topProductsData.periodSummary.totalLossesPercent ?? 0)).toFixed(2)}%
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {/* Скидки */}
+                      <div className="space-y-3 p-4 bg-white/50 dark:bg-gray-900/30 rounded-lg border border-orange-200/50 dark:border-orange-800/50">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium text-muted-foreground">Скидки</span>
+                          <span className="text-xs text-muted-foreground">руб.</span>
+                        </div>
+                        <div className="space-y-1">
+                          <div className="text-2xl font-bold text-orange-700 dark:text-orange-300">
+                            {formatCurrency(topProductsData.periodSummary.totalDiscounts ?? 0)}
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs text-muted-foreground">
+                              {((topProductsData.periodSummary.discountsPercent ?? 0)).toFixed(1)}% от выручки
+                            </span>
+                          </div>
+                          {topProductsData.periodSummary.totalLosses > 0 && (
+                            <div className="text-xs text-muted-foreground">
+                              {((topProductsData.periodSummary.totalDiscounts ?? 0) / (topProductsData.periodSummary.totalLosses ?? 1) * 100).toFixed(1)}% от общих потерь
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      
+                      {/* Бонусы (списано) */}
+                      <div className="space-y-3 p-4 bg-white/50 dark:bg-gray-900/30 rounded-lg border border-red-200/50 dark:border-red-800/50">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium text-muted-foreground">Бонусы (списано)</span>
+                          <span className="text-xs text-muted-foreground">руб.</span>
+                        </div>
+                        <div className="space-y-1">
+                          <div className="text-2xl font-bold text-red-700 dark:text-red-300">
+                            {formatCurrency(topProductsData.periodSummary.totalBonuses ?? 0)}
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs text-muted-foreground">
+                              {((topProductsData.periodSummary.bonusesPercent ?? 0)).toFixed(1)}% от выручки
+                            </span>
+                          </div>
+                          {topProductsData.periodSummary.totalLosses > 0 && (
+                            <div className="text-xs text-muted-foreground">
+                              {((topProductsData.periodSummary.totalBonuses ?? 0) / (topProductsData.periodSummary.totalLosses ?? 1) * 100).toFixed(1)}% от общих потерь
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Начислено бонусов */}
+                      <div className="space-y-3 p-4 bg-white/50 dark:bg-gray-900/30 rounded-lg border border-blue-200/50 dark:border-blue-800/50">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium text-muted-foreground">Начислено бонусов</span>
+                          <span className="text-xs text-muted-foreground">руб.</span>
+                        </div>
+                        <div className="space-y-1">
+                          <div className="text-2xl font-bold text-blue-700 dark:text-blue-300">
+                            {formatCurrency(topProductsData.periodSummary.totalBonusAccrued ?? 0)}
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs text-muted-foreground">
+                              Сумма столбца "Начислено бонусов"
+                            </span>
+                          </div>
+                          {topProductsData.periodSummary.netRevenue > 0 && (
+                            <div className="text-xs text-muted-foreground">
+                              {((topProductsData.periodSummary.totalBonusAccrued ?? 0) / topProductsData.periodSummary.netRevenue * 100).toFixed(2)}% от выручки
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Дополнительная информация */}
+                    <div className="mt-4 pt-4 border-t border-border/50">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs text-muted-foreground">
+                        <div>
+                          <span className="font-semibold text-foreground">Формула расчета бонусов:</span>
+                          <span className="ml-2">Сумма столбца "цена" - Сумма столбца "цена со скидкой"</span>
+                        </div>
+                        <div>
+                          <span className="font-semibold text-foreground">Период:</span>
+                          <span className="ml-2">
+                            {new Date(analytics.period.from).toLocaleDateString('ru-RU')} — {new Date(analytics.period.to).toLocaleDateString('ru-RU')}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </Card>
+                </motion.div>
+              )}
             </>
           )}
         </TabsContent>

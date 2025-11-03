@@ -20,12 +20,18 @@ export function LoginForm({ onSwitchToRegister }: LoginFormProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Загружаем сохраненный email из localStorage
+  const lastEmail = typeof window !== 'undefined' ? localStorage.getItem('coffee-kpi-last-email') : null;
+
   const {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
   } = useForm<LoginData>({
     resolver: zodResolver(loginSchema),
+    defaultValues: {
+      email: lastEmail || '',
+    },
   });
 
   const onSubmit = async (data: LoginData) => {

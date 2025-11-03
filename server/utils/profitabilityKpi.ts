@@ -131,6 +131,8 @@ async function buildDailyAggregates(): Promise<DailyAggregate[]> {
         : Number.isFinite(revenueNet - cogsTotal)
           ? revenueNet - cogsTotal
           : null;
+    // Валовая маржа рассчитывается от финальной выручки (revenueNet)
+    // Формула: маржа = (выручка - себестоимость) / выручка × 100
     const grossMarginPct =
       grossProfit === null || revenueNet === 0 ? null : grossProfit / revenueNet;
 

@@ -15,11 +15,7 @@ import { storage } from '../storage';
 import { parseProfitabilityExcelFile } from '../utils/profitabilityImport';
 import { parseCogsExcelFile } from '../utils/cogsImport';
 import { buildProfitabilityAnalytics } from '../utils/profitabilityAnalytics';
-import {
-  calculateProfitabilitySummary,
-  calculateProfitabilitySeries,
-  calculateProfitabilityTable,
-} from '../utils/profitabilityKpi';
+import { calculateTopProducts, calculateBonusesAndDiscountsFromBuffer } from '../utils/topProductsAnalytics';
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -44,6 +40,43 @@ function resolveAuthor(req: Request): string | undefined {
     return undefined;
   }
   return user.email ?? user.name ?? user.userId ?? undefined;
+}
+
+/**
+ * Декодирует имя файла из различных кодировок в UTF-8
+ * Multer может получать имена файлов в неправильной кодировке от браузера
+ */
+function decodeFilename(filename: string): string {
+  try {
+    // Если имя файла содержит кракозябры (некорректные символы UTF-8)
+    // Пробуем декодировать из latin1 в utf8
+    if (filename.includes('Ð') || filename.includes('Ñ') || /[\x80-\xFF]/.test(filename)) {
+      try {
+        // Пробуем декодировать как latin1 → utf8
+        // Это часто помогает, когда браузер отправляет кириллицу в latin1
+        const decoded = Buffer.from(filename, 'latin1').toString('utf8');
+        // Проверяем, что декодирование дало разумный результат
+        if (decoded !== filename && !decoded.includes('�')) {
+          return decoded;
+        }
+      } catch {
+        // Игнорируем ошибки
+      }
+      
+      // Альтернативный метод: пробуем через decodeURIComponent
+      try {
+        const uriDecoded = decodeURIComponent(escape(filename));
+        if (uriDecoded !== filename && !uriDecoded.includes('�')) {
+          return uriDecoded;
+        }
+      } catch {
+        // Игнорируем ошибки
+      }
+    }
+    return filename;
+  } catch {
+    return filename;
+  }
 }
 
 function parseDateParam(value?: string | string[]): Date | undefined {
@@ -124,10 +157,12 @@ export function registerProfitabilityRoutes(app: Express): void {
 
         const { dataset, records } = await storage.createProfitabilityDataset({
           name: parseResult.sheetName,
-          sourceFile: file.originalname,
+          sourceFile: decodeFilename(file.originalname),
           periodStart,
           periodEnd,
           records: parseResult.records,
+          ...calculateBonusesAndDiscountsFromBuffer(file.buffer),
+          fileBuffer: file.buffer,
         });
 
         const rowsOk = records.length;
@@ -136,7 +171,7 @@ export function registerProfitabilityRoutes(app: Express): void {
         const logEntry = await storage.createProfitabilityImportLog({
           status: rowsFailed > 0 || warnings.length > 0 ? 'partial' : 'success',
           datasetId: dataset.id,
-          sourceFile: file.originalname,
+          sourceFile: decodeFilename(file.originalname),
           rowsProcessed: parseResult.rowsProcessed,
           periodStart,
           periodEnd,
@@ -149,7 +184,7 @@ export function registerProfitabilityRoutes(app: Express): void {
         const periodToStr = formatISO(periodEnd, { representation: 'date' });
 
         const batch = await storage.createImportBatch({
-          filename: file.originalname,
+          filename: decodeFilename(file.originalname),
           sourceType: 'z-report',
           rowsTotal: parseResult.rowsProcessed,
           rowsOk,
@@ -611,7 +646,7 @@ export function registerProfitabilityRoutes(app: Express): void {
         if (rowsProcessed === 0 || !periodStart || !periodEnd) {
           const logEntry = await storage.createProfitabilityImportLog({
             status: 'failed',
-            sourceFile: mainFile.originalname,
+            sourceFile: decodeFilename(mainFile.originalname),
             rowsProcessed: 0,
             periodStart: null,
             periodEnd: null,
@@ -631,10 +666,12 @@ export function registerProfitabilityRoutes(app: Express): void {
 
         const creation = await storage.createProfitabilityDataset({
           name: parseResult.sheetName,
-          sourceFile: mainFile.originalname,
+          sourceFile: decodeFilename(mainFile.originalname),
           periodStart,
           periodEnd,
           records: parseResult.records,
+          ...calculateBonusesAndDiscountsFromBuffer(mainFile.buffer),
+          fileBuffer: mainFile.buffer,
         });
 
         const status =
@@ -643,7 +680,7 @@ export function registerProfitabilityRoutes(app: Express): void {
         const logEntry = await storage.createProfitabilityImportLog({
           status,
           datasetId: creation.dataset.id,
-          sourceFile: mainFile.originalname,
+          sourceFile: decodeFilename(mainFile.originalname),
           rowsProcessed,
           periodStart,
           periodEnd,
@@ -676,7 +713,7 @@ export function registerProfitabilityRoutes(app: Express): void {
         try {
           await storage.createProfitabilityImportLog({
             status: 'failed',
-            sourceFile: mainFile.originalname,
+            sourceFile: decodeFilename(mainFile.originalname),
             rowsProcessed: 0,
             periodStart: null,
             periodEnd: null,
@@ -718,6 +755,24 @@ export function registerProfitabilityRoutes(app: Express): void {
     } catch (error) {
       console.error('[profitability] list import logs failed', error);
       res.status(500).json({ error: 'Не удалось получить журнал импортов' });
+    }
+  });
+
+  app.get('/api/profitability/:datasetId/top-products', async (req, res): Promise<void> => {
+    try {
+      const datasetId = req.params.datasetId;
+      const from = parseDateParam(req.query.from as string | string[] | undefined);
+      const to = parseDateParam(req.query.to as string | string[] | undefined);
+
+      // Получаем сохраненный файл из storage
+      const fileBuffer = await storage.getProfitabilityFile(datasetId);
+      const result = await calculateTopProducts(datasetId, fileBuffer ?? undefined, from, to);
+      res.json(result);
+    } catch (error) {
+      console.error('[profitability] top-products failed', error);
+      const status = (error as any)?.status ?? 500;
+      const message = error instanceof Error ? error.message : 'Не удалось рассчитать топ-5 позиций';
+      res.status(status).json({ error: message });
     }
   });
 

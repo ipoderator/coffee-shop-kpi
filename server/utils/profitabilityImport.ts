@@ -104,24 +104,71 @@ const PROFITABILITY_COLUMNS = {
   ],
 } as const;
 
-const DETAILED_COLUMN_MAPPINGS = {
+// Новый формат колонок для детальных позиций продаж
+const DETAILED_SALES_COLUMNS = {
+  salesPoint: ['торг.точка', 'торг точка', 'торговая точка', 'sales point', 'магазин', 'точка'],
   shiftDate: ['смена (дата)', 'дата смены', 'дата', 'shift date', 'дата чека', 'дата/время чека'],
   shiftNumber: ['смена (номер)', 'номер смены', 'shift number', 'номер смены (смена)'],
   checkNumber: ['номер чека', 'чек', 'чек №', 'check number', 'номер'],
-  amount: [
-    'цена со скидкой',
-    'сумма со скидкой',
-    'стоимость со скидкой',
-    'итог',
-    'итого',
-    'сумма чека',
-    'сумма',
-    'оплачено',
-  ],
-  cost: ['себестоимость', 'себестоимость позиции', 'себестоимость товара', 'с/с'],
-  quantity: ['количество', 'qty', 'кол-во', 'кол.', 'quantity'],
+  creationTime: ['время создания', 'время', 'creation time', 'дата время создания', 'дата/время'],
+  cashier: ['кассир', 'cashier'],
+  waiter: ['официант', 'waiter'],
+  itemName: ['наименование', 'название', 'товар', 'item name', 'name', 'product'],
+  comment: ['комментарий', 'comment', 'примечание'],
+  preparationTime: ['время приготовления', 'preparation time', 'время готовки'],
+  cost: ['себестоимость', 'себестоимость позиции', 'себестоимость товара', 'с/с', 'cost'],
   price: ['цена', 'стоимость', 'price', 'цена, руб', 'цена (руб)'],
-  discountRub: ['скидка, руб', 'скидка руб', 'скидка (руб)', 'скидка руб.', 'скидка (руб.)'],
+  discountRub: ['скидка, руб', 'скидка руб', 'скидка (руб)', 'скидка руб.', 'скидка (руб.)', 'discount'],
+  priceWithDiscount: [
+    'цена со скидкой',
+    'цена со скидкой, руб',
+    'цена со скидкой (руб)',
+    'цена со скидкой руб',
+    'цена со скидкой руб.',
+    'price with discount',
+    'final price',
+    'итого',
+    'итог',
+    'цена итого',
+    'цена финальная',
+  ],
+  bonusUsed: [
+    'использовано бонусов',
+    'использовано бонус',
+    'бонусы использованы',
+    'бонусы списаны',
+    'списано бонусов',
+    'bonus used',
+    'бонус',
+  ],
+  bonusAccrued: [
+    'начислено бонусов',
+    'начислено бонус',
+    'бонусы начислены',
+    'бонусы начислено',
+    'начисление бонусов',
+    'bonus accrued',
+    'бонусы начислены, руб',
+    'начисленные бонусы',
+  ],
+  discountPercent: [
+    'скидка, %',
+    'скидка %',
+    'скидка (%)',
+    'скидка процентов',
+    'discount %',
+    'discount percent',
+    'процент скидки',
+  ],
+  arbitraryDiscount: [
+    'задана произвольная скидка',
+    'произвольная скидка',
+    'ручная скидка',
+    'скидка произвольная',
+    'arbitrary discount',
+    'manual discount',
+    'custom discount',
+  ],
   operationType: ['тип чека', 'тип операции', 'вид операции', 'тип документа', 'тип'],
   paymentType: [
     'способ оплаты',
@@ -131,15 +178,14 @@ const DETAILED_COLUMN_MAPPINGS = {
     'оплата',
     'канал оплаты',
   ],
-  paymentGroup: ['группа оплаты', 'метод оплаты (группа)', 'тип оплаты (группа)'],
 } as const;
 
-type DetailedColumnKey = keyof typeof DETAILED_COLUMN_MAPPINGS;
+type DetailedColumnKey = keyof typeof DETAILED_SALES_COLUMNS;
 
 type HeaderKey = keyof typeof PROFITABILITY_COLUMNS;
 
 const REQUIRED_HEADER_KEYS: HeaderKey[] = ['reportDate', 'cashIncome', 'cashlessIncome'];
-const DETAILED_REQUIRED_HEADER_KEYS: DetailedColumnKey[] = ['shiftDate', 'checkNumber', 'amount'];
+const DETAILED_REQUIRED_HEADER_KEYS: DetailedColumnKey[] = ['shiftDate', 'checkNumber', 'price'];
 const MAX_HEADER_SCAN_ROWS = 30;
 
 const FIELD_LABELS: Record<HeaderKey, string> = {
@@ -227,6 +273,16 @@ function findHeaderRow(rows: (string | number | null)[][]): { index: number; hea
       continue;
     }
 
+    // Проверяем новый формат детальных позиций продаж
+    const hasDetailedSalesRequired = DETAILED_REQUIRED_HEADER_KEYS.every(
+      (key) => detectDetailedColumn(headers, DETAILED_SALES_COLUMNS[key]) !== undefined,
+    );
+
+    if (hasDetailedSalesRequired) {
+      return { index: i, headers };
+    }
+
+    // Fallback: проверяем старый формат Z-отчетов
     const hasSummaryRequired = REQUIRED_HEADER_KEYS.every((key) => {
       const config = HEADER_CONFIG[key];
       const candidates = [config.canonical, ...config.aliases].filter(Boolean);
@@ -235,17 +291,13 @@ function findHeaderRow(rows: (string | number | null)[][]): { index: number; hea
       );
     });
 
-    const hasDetailedRequired = DETAILED_REQUIRED_HEADER_KEYS.every(
-      (key) => detectDetailedColumn(headers, DETAILED_COLUMN_MAPPINGS[key]) !== undefined,
-    );
-
-    if (hasSummaryRequired || hasDetailedRequired) {
+    if (hasSummaryRequired) {
       return { index: i, headers };
     }
   }
 
   throw new Error(
-    'Не удалось найти строку заголовков. Убедитесь, что файл содержит колонки "Дата/время", "Приход наличными" и "Приход безналичными".',
+    'Не удалось найти строку заголовков. Убедитесь, что файл содержит колонки "Смена (дата)", "Номер чека" и "Цена".',
   );
 }
 
@@ -306,6 +358,16 @@ function detectDetailedColumn(headers: string[], mappings: readonly string[]): n
   }
 
   return undefined;
+}
+
+function detectDetailedSalesColumns(headers: string[]): Record<DetailedColumnKey, number | undefined> {
+  const result: Record<string, number | undefined> = {};
+  
+  (Object.keys(DETAILED_SALES_COLUMNS) as DetailedColumnKey[]).forEach((key) => {
+    result[key] = detectDetailedColumn(headers, DETAILED_SALES_COLUMNS[key]);
+  });
+  
+  return result as Record<DetailedColumnKey, number | undefined>;
 }
 
 function parseExcelDate(value: unknown): Date | null {
@@ -528,13 +590,6 @@ function ensureCostAmount(rawCost: number | null, quantity: number | null): numb
   return rawCost;
 }
 
-interface DetailedFormatParams {
-  rows: (string | number | null)[][];
-  headerRowIndex: number;
-  headers: string[];
-  sheetName: string;
-}
-
 interface CheckSummary {
   date: Date;
   shiftNumber: string | null;
@@ -553,41 +608,32 @@ interface CheckSummary {
   };
 }
 
-function tryParseDetailedProfitabilityFormat({
+interface DetailedSalesFormatParams {
+  rows: (string | number | null)[][];
+  headerRowIndex: number;
+  headers: string[];
+  sheetName: string;
+  columnMap: Record<DetailedColumnKey, number | undefined>;
+  options: ProfitabilityParseOptions;
+}
+
+function parseDetailedSalesFormat({
   rows,
   headerRowIndex,
   headers,
   sheetName,
-}: DetailedFormatParams): ProfitabilityParseResult | null {
-  const shiftDateIdx = detectDetailedColumn(headers, DETAILED_COLUMN_MAPPINGS.shiftDate);
-  const checkNumberIdx = detectDetailedColumn(headers, DETAILED_COLUMN_MAPPINGS.checkNumber);
-  const amountIdx = detectDetailedColumn(headers, DETAILED_COLUMN_MAPPINGS.amount);
-
-  if (shiftDateIdx === undefined || checkNumberIdx === undefined || amountIdx === undefined) {
-    return null;
-  }
-
-  const shiftNumberIdx = detectDetailedColumn(headers, DETAILED_COLUMN_MAPPINGS.shiftNumber);
-  const paymentTypeIdx =
-    detectDetailedColumn(headers, DETAILED_COLUMN_MAPPINGS.paymentType) ??
-    detectDetailedColumn(headers, DETAILED_COLUMN_MAPPINGS.paymentGroup);
-  const operationTypeIdx = detectDetailedColumn(headers, DETAILED_COLUMN_MAPPINGS.operationType);
-  const costIdx = detectDetailedColumn(headers, DETAILED_COLUMN_MAPPINGS.cost);
-  const quantityIdx = detectDetailedColumn(headers, DETAILED_COLUMN_MAPPINGS.quantity);
-  const priceIdx = detectDetailedColumn(headers, DETAILED_COLUMN_MAPPINGS.price);
-  const discountIdx = detectDetailedColumn(headers, DETAILED_COLUMN_MAPPINGS.discountRub);
-
+  columnMap,
+  options,
+}: DetailedSalesFormatParams): ProfitabilityParseResult {
   const dataRows = rows.slice(headerRowIndex + 1);
-  if (dataRows.length === 0) {
-    return null;
-  }
-
-  const checkSummaries = new Map<string, CheckSummary>();
   const errors: ProfitabilityImportError[] = [];
   const warnings: string[] = [];
+  const skippedRows = 0;
+  
+  // Агрегируем данные по чекам/сменам
+  const checkSummaries = new Map<string, CheckSummary>();
   const unknownPaymentMethods = new Set<string>();
   let missingPaymentColumnWarningAdded = false;
-  let skippedRows = 0;
 
   dataRows.forEach((row, index) => {
     if (
@@ -599,6 +645,21 @@ function tryParseDetailedProfitabilityFormat({
     }
 
     const excelRowNumber = headerRowIndex + index + 2;
+    
+    // Извлекаем обязательные поля
+    const shiftDateIdx = columnMap.shiftDate;
+    const checkNumberIdx = columnMap.checkNumber;
+    const priceIdx = columnMap.price;
+    
+    if (shiftDateIdx === undefined || checkNumberIdx === undefined || priceIdx === undefined) {
+      errors.push({
+        rowNumber: excelRowNumber,
+        field: 'header',
+        message: 'Не найдены обязательные колонки: Смена (дата), Номер чека или Цена',
+      });
+      return;
+    }
+
     const rawDate = row[shiftDateIdx];
     const parsedDate = parseExcelDate(rawDate);
 
@@ -609,7 +670,6 @@ function tryParseDetailedProfitabilityFormat({
         message: 'Не удалось распознать дату смены.',
         value: rawDate === undefined || rawDate === null ? null : String(rawDate),
       });
-      skippedRows += 1;
       return;
     }
 
@@ -621,29 +681,60 @@ function tryParseDetailedProfitabilityFormat({
     if (!checkNumber) {
       errors.push({
         rowNumber: excelRowNumber,
-        field: 'incomeChecks',
+        field: 'checkNumber',
         message: 'Не указан номер чека.',
       });
-      skippedRows += 1;
       return;
     }
 
-    const quantity = quantityIdx !== undefined ? (parseNumber(row[quantityIdx]) ?? 1) : 1;
-    const unitPrice = priceIdx !== undefined ? parseNumber(row[priceIdx]) : null;
-    const discountRub = discountIdx !== undefined ? parseNumber(row[discountIdx]) : null;
-    const rawAmount = parseNumber(row[amountIdx]);
+    const shiftNumberIdx = columnMap.shiftNumber;
+    const shiftNumber =
+      shiftNumberIdx !== undefined && row[shiftNumberIdx] !== null && row[shiftNumberIdx] !== undefined
+        ? String(row[shiftNumberIdx]).trim() || null
+        : null;
 
-    let lineAmount = ensureLineAmount(rawAmount, quantity, unitPrice, discountRub);
-
-    const operationValue = operationTypeIdx !== undefined ? row[operationTypeIdx] : undefined;
-    const operationCategory = classifyOperationType(operationValue, lineAmount);
-
-    if (operationCategory !== 'income') {
-      lineAmount = Math.abs(lineAmount);
-    } else if (lineAmount < 0) {
-      lineAmount = Math.abs(lineAmount);
+    // Парсим цену, скидку, цену со скидкой и бонусы
+    const rawPrice = parseNumber(row[priceIdx]);
+    const discountIdx = columnMap.discountRub;
+    const rawDiscount = discountIdx !== undefined ? parseNumber(row[discountIdx]) : null;
+    const discountRub = rawDiscount ?? 0;
+    
+    // Приоритет: используем колонку "Цена со скидкой" если она есть
+    const priceWithDiscountIdx = columnMap.priceWithDiscount;
+    const rawPriceWithDiscount =
+      priceWithDiscountIdx !== undefined ? parseNumber(row[priceWithDiscountIdx]) : null;
+    
+    // Парсим использованные бонусы
+    const bonusUsedIdx = columnMap.bonusUsed;
+    const rawBonusUsed = bonusUsedIdx !== undefined ? parseNumber(row[bonusUsedIdx]) : null;
+    const bonusUsed = rawBonusUsed ?? 0;
+    
+    // Расчет выручки позиции (финальная цена продажи)
+    let lineAmount: number;
+    if (rawPriceWithDiscount !== null) {
+      // Используем готовую цену со скидкой как приоритетный источник
+      // Вычитаем бонусы, так как они уменьшают фактическую выручку
+      lineAmount = rawPriceWithDiscount - bonusUsed;
+    } else {
+      // Fallback: рассчитываем из базовой цены, скидки и бонусов
+      lineAmount = (rawPrice ?? 0) - discountRub - bonusUsed;
     }
 
+    if (lineAmount <= 0 && rawPrice === null && rawPriceWithDiscount === null) {
+      // Пропускаем строки без цены
+      return;
+    }
+
+    // Определяем тип операции
+    const operationTypeIdx = columnMap.operationType;
+    const operationValue = operationTypeIdx !== undefined ? row[operationTypeIdx] : undefined;
+    const operationCategory = classifyOperationType(operationValue, lineAmount);
+    
+    // Используем абсолютное значение суммы
+    const absAmount = Math.abs(lineAmount);
+
+    // Определяем способ оплаты
+    const paymentTypeIdx = columnMap.paymentType;
     const paymentValue = paymentTypeIdx !== undefined ? row[paymentTypeIdx] : undefined;
     const paymentClassified = classifyPaymentMethod(paymentValue);
     let paymentCategory = paymentClassified.category;
@@ -669,12 +760,12 @@ function tryParseDetailedProfitabilityFormat({
       }
     }
 
+    // Себестоимость
+    const costIdx = columnMap.cost;
     const costValue =
-      costIdx !== undefined ? ensureCostAmount(parseNumber(row[costIdx]), quantity) : 0;
+      costIdx !== undefined ? (parseNumber(row[costIdx]) ?? 0) : 0;
 
-    const shiftNumber =
-      shiftNumberIdx !== undefined ? String(row[shiftNumberIdx] ?? '').trim() || null : null;
-
+    // Создаем ключ для чека: дата + смена + номер чека
     const dateKey = parsedDate.toISOString().slice(0, 10);
     const checkKey = `${dateKey}#${shiftNumber ?? '__default__'}#${checkNumber}`;
 
@@ -700,6 +791,7 @@ function tryParseDetailedProfitabilityFormat({
       checkSummaries.set(checkKey, summary);
     }
 
+    // Распределяем суммы по типам операций и способам оплаты
     let buckets: PaymentBreakdown;
     if (operationCategory === 'income') {
       buckets = summary.payments.income;
@@ -711,33 +803,37 @@ function tryParseDetailedProfitabilityFormat({
 
     switch (paymentCategory) {
       case 'cash':
-        buckets.cash += lineAmount;
+        buckets.cash += absAmount;
         break;
       case 'qr':
-        buckets.qr += lineAmount;
+        buckets.qr += absAmount;
         break;
       case 'sbp':
-        buckets.sbp += lineAmount;
+        buckets.sbp += absAmount;
         break;
       default:
-        buckets.cashless += lineAmount;
+        buckets.cashless += absAmount;
         break;
     }
 
+    // Агрегируем выручку и себестоимость по типу операции
+    // Прибыль будет рассчитана позже: выручка - себестоимость
     if (operationCategory === 'income') {
-      summary.incomeAmount += lineAmount;
-      summary.cogs.income += Math.max(0, costValue);
+      summary.incomeAmount += absAmount; // Выручка по позиции (с учетом скидок и бонусов)
+      summary.cogs.income += Math.max(0, costValue); // Себестоимость позиции
     } else if (operationCategory === 'return') {
-      summary.returnAmount += lineAmount;
+      summary.returnAmount += absAmount;
       summary.cogs.returns += Math.max(0, costValue);
     } else {
-      summary.correctionAmount += lineAmount;
+      summary.correctionAmount += absAmount;
       summary.cogs.corrections += Math.max(0, costValue);
     }
   });
 
   if (checkSummaries.size === 0) {
-    return null;
+    const error = new Error('Не удалось извлечь данные из файла');
+    (error as any).details = { errors, warnings };
+    throw error;
   }
 
   if (unknownPaymentMethods.size > 0) {
@@ -748,6 +844,7 @@ function tryParseDetailedProfitabilityFormat({
     );
   }
 
+  // Агрегируем по сменам
   const recordMap = new Map<
     string,
     {
@@ -833,68 +930,66 @@ function tryParseDetailedProfitabilityFormat({
 
   const records = Array.from(recordMap.values())
     .map(({ record, cogsIncome, cogsReturn, cogsCorrection }) => {
+      // Расчет общей себестоимости по смене:
+      // COGS = себестоимость приходов - себестоимость возвратов + себестоимость коррекций
       const cogsTotal = cogsIncome - cogsReturn + cogsCorrection;
       return {
         ...record,
+        // Себестоимость сохраняется для последующего расчета прибыли:
+        // Прибыль = Выручка - Себестоимость
+        // Валовая маржа = (Выручка - Себестоимость) / Выручка × 100
         cogsTotal: cogsTotal !== 0 ? cogsTotal : undefined,
       };
     })
     .sort((a, b) => a.reportDate.getTime() - b.reportDate.getTime());
 
-  const headerWarnings: string[] = [];
+  // Определяем использованные колонки для detectedColumns
+  const usedIndexes = new Set<number>(
+    Object.values(columnMap).filter((idx): idx is number => idx !== undefined),
+  );
+  const ignoredHeaders = headers.filter((_, idx) => !usedIndexes.has(idx));
+  if (ignoredHeaders.length > 0) {
+    warnings.push(
+      `Часть колонок проигнорирована при расчете рентабельности: ${ignoredHeaders.join(', ')}`,
+    );
+  }
 
-  if (headerRowIndex >= 0) {
-    const usedIndexes = new Set<number>([
-      shiftDateIdx,
-      checkNumberIdx,
-      amountIdx,
-      ...(shiftNumberIdx !== undefined ? [shiftNumberIdx] : []),
-      ...(paymentTypeIdx !== undefined ? [paymentTypeIdx] : []),
-      ...(operationTypeIdx !== undefined ? [operationTypeIdx] : []),
-      ...(costIdx !== undefined ? [costIdx] : []),
-      ...(quantityIdx !== undefined ? [quantityIdx] : []),
-      ...(priceIdx !== undefined ? [priceIdx] : []),
-      ...(discountIdx !== undefined ? [discountIdx] : []),
-    ]);
-    const ignoredHeaders = headers.filter((_, idx) => !usedIndexes.has(idx));
-    if (ignoredHeaders.length > 0) {
-      headerWarnings.push(
-        `Часть колонок проигнорирована при расчете рентабельности: ${ignoredHeaders.join(', ')}`,
-      );
-    }
+  // Добавляем предупреждения о важных колонках
+  if (columnMap.priceWithDiscount === undefined) {
+    warnings.push(
+      'Колонка "Цена со скидкой" не найдена. Выручка рассчитывается как цена - скидка - бонусы.',
+    );
+  }
+  if (columnMap.bonusUsed === undefined) {
+    warnings.push(
+      'Колонка "Использовано бонусов" не найдена. Бонусы не учитываются в расчете выручки.',
+    );
   }
 
   const detectedColumns: Record<string, string | undefined> = {
-    reportDate: headers[shiftDateIdx],
-    shiftNumber: shiftNumberIdx !== undefined ? headers[shiftNumberIdx] : undefined,
-    incomeChecks: headers[checkNumberIdx],
-    cashIncome: paymentTypeIdx !== undefined ? headers[paymentTypeIdx] : headers[amountIdx],
-    cashlessIncome: paymentTypeIdx !== undefined ? headers[paymentTypeIdx] : headers[amountIdx],
-    returnChecks:
-      operationTypeIdx !== undefined ? headers[operationTypeIdx] : headers[checkNumberIdx],
-    cashReturn: paymentTypeIdx !== undefined ? headers[paymentTypeIdx] : headers[amountIdx],
-    cashlessReturn: paymentTypeIdx !== undefined ? headers[paymentTypeIdx] : headers[amountIdx],
-    correctionChecks:
-      operationTypeIdx !== undefined ? headers[operationTypeIdx] : headers[checkNumberIdx],
-    correctionCash: paymentTypeIdx !== undefined ? headers[paymentTypeIdx] : headers[amountIdx],
-    correctionCashless: paymentTypeIdx !== undefined ? headers[paymentTypeIdx] : headers[amountIdx],
+    reportDate: columnMap.shiftDate !== undefined ? headers[columnMap.shiftDate] : undefined,
+    shiftNumber: columnMap.shiftNumber !== undefined ? headers[columnMap.shiftNumber] : undefined,
+    checkNumber: columnMap.checkNumber !== undefined ? headers[columnMap.checkNumber] : undefined,
+    price: columnMap.price !== undefined ? headers[columnMap.price] : undefined,
+    cost: columnMap.cost !== undefined ? headers[columnMap.cost] : undefined,
+    discountRub: columnMap.discountRub !== undefined ? headers[columnMap.discountRub] : undefined,
+    priceWithDiscount:
+      columnMap.priceWithDiscount !== undefined ? headers[columnMap.priceWithDiscount] : undefined,
+    bonusUsed: columnMap.bonusUsed !== undefined ? headers[columnMap.bonusUsed] : undefined,
+    paymentType: columnMap.paymentType !== undefined ? headers[columnMap.paymentType] : undefined,
+    operationType: columnMap.operationType !== undefined ? headers[columnMap.operationType] : undefined,
   };
-
-  const allWarnings = [...headerWarnings, ...warnings];
-
-  const periodStartDate = periodStart ?? null;
-  const periodEndDate = periodEnd ?? null;
 
   return {
     records,
-    periodStart: periodStartDate,
-    periodEnd: periodEndDate,
+    periodStart: periodStart ?? null,
+    periodEnd: periodEnd ?? null,
     detectedColumns,
     sheetName,
     headerRowIndex,
     errors,
-    warnings: allWarnings,
-    rowsProcessed: checkSummaries.size,
+    warnings,
+    rowsProcessed: dataRows.length,
     skippedRows,
     duplicateCount: 0,
   };
@@ -906,74 +1001,45 @@ export function parseProfitabilityExcelFile(
 ): ProfitabilityParseResult {
   const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: false });
 
-  // 1. Ищем лист Z-отчетов, допускаем варианты написания (ё/е, пробелы/дефисы, английский)
-  const normalize = (s: string): string =>
-    s
-      .toLowerCase()
-      .replace(/ё/g, 'е')
-      .replace(/\s+/g, '')
-      .replace(/[^a-zа-я0-9]/g, '');
-
-  const normalizedSheets = workbook.SheetNames.map((name) => ({
-    original: name,
-    normalized: normalize(name),
-  }));
-  console.log('[Z-REPORT DEBUG] Всего листов:', workbook.SheetNames);
-  console.log('[Z-REPORT DEBUG] Normalized листы:', normalizedSheets);
-
-  const isZReports = (n: string): boolean => {
-    // Примеры, которые должны сработать:
-    // "z-отчеты", "z-отчёты", "z отчеты", "zreports", "z-report", "zotchety"
-    return n.startsWith('z') && (n.includes('отчет') || n.includes('otch') || n.includes('report'));
-  };
-
-  // Предпочитаем точное попадание по русскому названию
-  const preferred = normalizedSheets.find((s) => s.normalized === 'zотчеты');
-  const fallback =
-    normalizedSheets.find((s) => isZReports(s.normalized)) ||
-    normalizedSheets.find((s) => s.normalized === 'заказанныепозиции');
-  let rawSheetName = preferred?.original ?? fallback?.original;
-
-  // Если не найдено подходящее имя, но в файле только один лист — принимаем его для гибкости
-  if (!rawSheetName && workbook.SheetNames.length === 1) {
-    rawSheetName = workbook.SheetNames[0];
-  }
-
+  // Используем первый лист или любой подходящий
+  let rawSheetName = workbook.SheetNames[0];
   if (!rawSheetName) {
-    const err = new Error('Лист Z-отчеты не найден');
+    const err = new Error('Файл не содержит листов');
     (err as any).details = {
       errors: [
         {
           rowNumber: 0,
           field: 'sheet',
-          message: `Лист Z-отчеты не найден в файле. Найдены листы: ${workbook.SheetNames.join(', ')}`,
+          message: 'Файл не содержит листов',
         },
       ],
     };
     throw err;
   }
+
   const sheet = workbook.Sheets[rawSheetName];
   if (!sheet) {
-    const err = new Error('Лист Z-отчеты не найден');
+    const err = new Error('Лист не найден');
     (err as any).details = {
       errors: [
         {
           rowNumber: 0,
           field: 'sheet',
-          message: 'Лист Z-отчеты не найден в файле',
+          message: 'Лист не найден в файле',
         },
       ],
     };
     throw err;
   }
 
-  // 2. Чтение без заголовков, анализ первых 3 строк
+  // Чтение данных
   const rows = XLSX.utils.sheet_to_json<(string | number | null)[]>(sheet, {
     header: 1,
     defval: null,
     blankrows: false,
     raw: false,
   });
+  
   if (rows.length === 0) {
     const err = new Error('Лист с данными пуст');
     (err as any).details = {
@@ -988,24 +1054,38 @@ export function parseProfitabilityExcelFile(
     throw err;
   }
 
-  const { index: headerRowIndex, headers } = findHeaderRow(rows);
-  const trimmedHeaders = headers.map((cell) =>
+  // Ограничиваем парсинг только колонками A-R (первые 18 колонок)
+  const MAX_COLUMNS = 18;
+  const limitedRows = rows.map((row) => row.slice(0, MAX_COLUMNS));
+
+  const { index: headerRowIndex, headers } = findHeaderRow(limitedRows);
+  const trimmedHeaders = headers.slice(0, MAX_COLUMNS).map((cell) =>
     cell === null || cell === undefined ? '' : String(cell).trim(),
   );
-  const columnMap = detectColumns(headers);
+  
+  // Определяем формат: новый детальный формат или старый формат Z-отчетов
+  const detailedColumns = detectDetailedSalesColumns(trimmedHeaders);
+  const hasDetailedFormat = DETAILED_REQUIRED_HEADER_KEYS.every(
+    (key) => detailedColumns[key] !== undefined,
+  );
 
-  const missingRequiredKeys = REQUIRED_HEADER_KEYS.filter((key) => columnMap[key] === undefined);
-  if (missingRequiredKeys.length > 0) {
-    const detailedResult = tryParseDetailedProfitabilityFormat({
-      rows,
+  if (hasDetailedFormat) {
+    // Парсим новый формат детальных позиций продаж
+    return parseDetailedSalesFormat({
+      rows: limitedRows,
       headerRowIndex,
       headers: trimmedHeaders,
       sheetName: rawSheetName,
+      columnMap: detailedColumns,
+      options,
     });
-    if (detailedResult) {
-      return detailedResult;
-    }
+  }
 
+  // Fallback: старый формат Z-отчетов
+  const columnMap = detectColumns(trimmedHeaders);
+  const missingRequiredKeys = REQUIRED_HEADER_KEYS.filter((key) => columnMap[key] === undefined);
+  
+  if (missingRequiredKeys.length > 0) {
     const err = new Error('Структура заголовков не совпадает с ожидаемой (см. детали)');
     (err as any).details = {
       errors: [
@@ -1054,7 +1134,7 @@ export function parseProfitabilityExcelFile(
     );
   }
 
-  const dataRows = rows.slice(headerRowIndex + 1);
+  const dataRows = limitedRows.slice(headerRowIndex + 1);
 
   const errors: ProfitabilityImportError[] = [];
   const warnings: string[] = [...headerWarnings];

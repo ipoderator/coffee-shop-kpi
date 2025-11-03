@@ -21,6 +21,8 @@ import {
   type ImportBatch,
 } from '@shared/schema';
 import { randomUUID } from 'crypto';
+import { promises as fs } from 'fs';
+import { join } from 'path';
 
 export interface IStorage {
   // Transactions
@@ -47,6 +49,10 @@ export interface IStorage {
     input: UpsertCogsDailyInput & { importBatchId: string },
   ): Promise<{ records: CogsDaily[] }>;
   listCogsDaily(): Promise<CogsDaily[]>;
+  
+  // Profitability file storage
+  saveProfitabilityFile(datasetId: string, fileBuffer: Buffer): Promise<void>;
+  getProfitabilityFile(datasetId: string): Promise<Buffer | null>;
 
   // Users
   getUserByEmail(email: string): Promise<User | null>;
@@ -74,6 +80,10 @@ export interface CreateProfitabilityDatasetInput {
   periodStart: Date;
   periodEnd: Date;
   records: ProfitabilityRecordInput[];
+  totalBonuses?: number;
+  totalDiscounts?: number;
+  totalBonusAccrued?: number;
+  fileBuffer?: Buffer;
 }
 
 export interface ProfitabilityRecordInput {
@@ -100,6 +110,9 @@ interface ProfitabilityDatasetInternal {
   periodStart: Date;
   periodEnd: Date;
   createdAt: Date;
+  totalBonuses?: number;
+  totalDiscounts?: number;
+  totalBonusAccrued?: number;
 }
 
 export interface CreateProfitabilityImportLogInput {
@@ -135,6 +148,8 @@ export interface UpsertCogsDailyInput {
   rows: UpsertCogsDailyEntry[];
 }
 
+const USERS_FILE_PATH = join(process.cwd(), '.data', 'users.json');
+
 export class MemStorage implements IStorage {
   private transactions: Map<string, Transaction>;
   private users: Map<string, User>;
@@ -145,6 +160,7 @@ export class MemStorage implements IStorage {
   private profitabilityImportLogs: Map<string, ProfitabilityImportLogEntry>;
   private importBatches: Map<string, ImportBatch>;
   private cogsDailyRecords: Map<string, CogsDaily>;
+  private profitabilityFiles: Map<string, Buffer>;
 
   constructor() {
     this.transactions = new Map();
@@ -156,6 +172,47 @@ export class MemStorage implements IStorage {
     this.profitabilityImportLogs = new Map();
     this.importBatches = new Map();
     this.cogsDailyRecords = new Map();
+    this.profitabilityFiles = new Map();
+  }
+
+  /**
+   * Загружает пользователей из файла
+   */
+  private async loadUsers(): Promise<void> {
+    try {
+      const data = await fs.readFile(USERS_FILE_PATH, 'utf-8');
+      const usersArray = JSON.parse(data) as any[];
+      usersArray.forEach((user) => {
+        // Преобразуем строковые даты обратно в Date объекты
+        this.users.set(user.id, {
+          ...user,
+          createdAt: new Date(user.createdAt),
+          updatedAt: new Date(user.updatedAt),
+          lastLoginAt: user.lastLoginAt ? new Date(user.lastLoginAt) : null,
+          passwordChangedAt: new Date(user.passwordChangedAt),
+          lockedUntil: user.lockedUntil ? new Date(user.lockedUntil) : null,
+        } as User);
+      });
+    } catch (error: any) {
+      // Файл не существует или пустой - это нормально при первом запуске
+      if (error.code !== 'ENOENT') {
+        console.warn('⚠️ Не удалось загрузить пользователей из файла:', error.message);
+      }
+    }
+  }
+
+  /**
+   * Сохраняет пользователей в файл
+   */
+  private async saveUsers(): Promise<void> {
+    try {
+      const usersArray = Array.from(this.users.values());
+      // Создаем директорию, если её нет
+      await fs.mkdir(join(process.cwd(), '.data'), { recursive: true });
+      await fs.writeFile(USERS_FILE_PATH, JSON.stringify(usersArray, null, 2), 'utf-8');
+    } catch (error) {
+      console.warn('⚠️ Не удалось сохранить пользователей в файл:', error);
+    }
   }
 
   private toDatasetInfo(dataset: ProfitabilityDatasetInternal): ProfitabilityDatasetInfo {
@@ -167,6 +224,9 @@ export class MemStorage implements IStorage {
       createdAt: dataset.createdAt.toISOString(),
       periodStart: dataset.periodStart.toISOString(),
       periodEnd: dataset.periodEnd.toISOString(),
+      totalBonuses: dataset.totalBonuses,
+      totalDiscounts: dataset.totalDiscounts,
+      totalBonusAccrued: dataset.totalBonusAccrued,
     };
   }
 
@@ -256,9 +316,17 @@ export class MemStorage implements IStorage {
       periodStart: input.periodStart,
       periodEnd: input.periodEnd,
       createdAt,
+      totalBonuses: input.totalBonuses,
+      totalDiscounts: input.totalDiscounts,
+      totalBonusAccrued: input.totalBonusAccrued,
     };
 
     this.profitabilityDatasets.set(datasetId, dataset);
+
+    // Сохраняем файл, если он был передан
+    if (input.fileBuffer) {
+      this.profitabilityFiles.set(datasetId, input.fileBuffer);
+    }
 
     const records: ProfitabilityRecord[] = input.records.map((record) => {
       const id = randomUUID();
@@ -420,6 +488,14 @@ export class MemStorage implements IStorage {
     );
   }
 
+  async saveProfitabilityFile(datasetId: string, fileBuffer: Buffer): Promise<void> {
+    this.profitabilityFiles.set(datasetId, fileBuffer);
+  }
+
+  async getProfitabilityFile(datasetId: string): Promise<Buffer | null> {
+    return this.profitabilityFiles.get(datasetId) || null;
+  }
+
   // User methods
   async getUserByEmail(email: string): Promise<User | null> {
     const user = Array.from(this.users.values()).find((u) => u.email === email);
@@ -451,6 +527,7 @@ export class MemStorage implements IStorage {
       updatedAt: now,
     };
     this.users.set(id, user);
+    await this.saveUsers();
     return user;
   }
 
@@ -464,6 +541,7 @@ export class MemStorage implements IStorage {
       updatedAt: new Date(),
     };
     this.users.set(id, updatedUser);
+    await this.saveUsers();
     return updatedUser;
   }
 
@@ -562,6 +640,7 @@ export class MemStorage implements IStorage {
         updatedAt: new Date(),
       };
       this.users.set(userId, updatedUser);
+      await this.saveUsers();
     }
   }
 
@@ -575,8 +654,41 @@ export class MemStorage implements IStorage {
         updatedAt: new Date(),
       };
       this.users.set(userId, updatedUser);
+      await this.saveUsers();
+    }
+  }
+
+  /**
+   * Инициализирует начальные данные (например, тестового пользователя)
+   */
+  async initialize(): Promise<void> {
+    // Загружаем пользователей из файла
+    await this.loadUsers();
+    
+    // Проверяем, есть ли уже пользователи
+    if (this.users.size === 0) {
+      // Создаем тестового пользователя, если пользователей нет
+      const { hashPassword } = await import('./utils/auth');
+      const defaultPassword = await hashPassword('admin123');
+      
+      await this.createUser({
+        email: 'admin@example.com',
+        password: defaultPassword,
+        name: 'Администратор',
+        role: 'admin',
+        isActive: true,
+      });
+
+      console.log('✅ Создан тестовый пользователь: admin@example.com / admin123');
+    } else {
+      console.log(`✅ Загружено ${this.users.size} пользователей из файла`);
     }
   }
 }
 
 export const storage = new MemStorage();
+
+// Инициализируем storage при импорте модуля
+storage.initialize().catch((error) => {
+  console.error('❌ Ошибка инициализации storage:', error);
+});

@@ -135,3 +135,6 @@ attached_assets/
 
 # ML training artifacts
 server/data/
+
+# Local data storage
+.data/

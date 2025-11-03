@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Switch, Route, Redirect } from 'wouter';
+import { Switch, Route, Redirect, useLocation } from 'wouter';
 import { queryClient } from './lib/queryClient';
 import { QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { Toaster } from '@/components/ui/toaster';
@@ -31,11 +31,16 @@ function DashboardLayout() {
   const { toast } = useToast();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
   const { filter } = useDateFilter();
+  const [location] = useLocation();
   const [uploadId, setUploadId] = useState<string | null>(() => {
     // Restore uploadId from localStorage on mount
     return localStorage.getItem('coffee-kpi-uploadId');
   });
   const [isUploading, setIsUploading] = useState(false);
+
+  // Страницы, которые не требуют uploadId
+  const pagesWithoutUploadId = ['/profitability', '/integrations'];
+  const isPageWithoutUploadId = pagesWithoutUploadId.includes(location);
 
   const fromIso = filter.from?.toISOString();
   const toIso = filter.to?.toISOString();
@@ -47,7 +52,7 @@ function DashboardLayout() {
     error,
   } = useQuery<AnalyticsResponse>({
     queryKey: ['/api/analytics', uploadId, { preset: filter.preset, from: fromIso, to: toIso }],
-    enabled: !!uploadId,
+    enabled: !!uploadId && !isPageWithoutUploadId,
     queryFn: async (): Promise<AnalyticsResponse> => {
       if (!uploadId) {
         throw new Error('Отсутствует идентификатор набора данных');
@@ -163,6 +168,40 @@ function DashboardLayout() {
 
   if (!isAuthenticated) {
     return <AuthPage />;
+  }
+
+  // Показываем страницы без uploadId (profitability, integrations) даже без uploadId
+  if (isPageWithoutUploadId) {
+    return (
+      <SidebarProvider style={style as React.CSSProperties}>
+        <div className="flex h-screen w-full bg-gradient-to-br from-background via-background to-primary/5">
+          <AppSidebar uploadId={uploadId} onNewUpload={handleNewUpload} />
+          <div className="flex flex-col flex-1 overflow-hidden">
+            <header className="sticky top-0 z-40 border-b border-border/50 bg-background/80 backdrop-blur-xl supports-[backdrop-filter]:bg-background/80 shadow-sm">
+              <div className="flex items-center h-14 px-4 gap-4">
+                <SidebarTrigger data-testid="button-sidebar-toggle" />
+                <h1 className="text-lg font-semibold flex-1">Coffee KPI Dashboard</h1>
+                {user && <LogoutButton user={user} />}
+              </div>
+            </header>
+            <main className="flex-1 overflow-auto">
+              <Switch>
+                <Route path="/profitability">
+                  <ProfitabilityPage />
+                </Route>
+                <Route path="/integrations">
+                  <IntegrationsPage />
+                </Route>
+                <Route path="/">
+                  <Redirect to="/overview" />
+                </Route>
+                <Route component={NotFound} />
+              </Switch>
+            </main>
+          </div>
+        </div>
+      </SidebarProvider>
+    );
   }
 
   if (!uploadId) {

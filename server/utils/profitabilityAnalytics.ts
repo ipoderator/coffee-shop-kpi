@@ -91,7 +91,9 @@ function buildDailyPoints(aggregated: AggregatedDay[]): ProfitabilityDailyPoint[
     const netRevenue = grossRevenue - returns + corrections;
     const cogsTotal = entry.cogsTotal;
     const grossProfit = netRevenue - cogsTotal;
-    const margin = grossRevenue > 0 ? grossProfit / grossRevenue : 0;
+    // Валовая маржа рассчитывается от финальной выручки (netRevenue), а не от валовой выручки
+    // Это соответствует бизнес-логике: маржа = (выручка - себестоимость) / выручка
+    const margin = netRevenue > 0 ? grossProfit / netRevenue : 0;
 
     return {
       date: formatISO(entry.date, { representation: 'date' }),
@@ -148,7 +150,9 @@ function buildKPIs(daily: ProfitabilityDailyPoint[]): ProfitabilityKPIs {
   const cashShare = totals.grossRevenue > 0 ? totals.cashIncome / totals.grossRevenue : 0;
   const cashlessShare = totals.grossRevenue > 0 ? totals.cashlessIncome / totals.grossRevenue : 0;
   const grossProfit = totals.netRevenue - totals.cogsTotal;
-  const margin = totals.grossRevenue > 0 ? grossProfit / totals.grossRevenue : 0;
+  // Валовая маржа рассчитывается от финальной выручки (netRevenue), а не от валовой выручки
+  // Это соответствует бизнес-логике: маржа = (выручка - себестоимость) / выручка
+  const margin = totals.netRevenue > 0 ? grossProfit / totals.netRevenue : 0;
 
   return {
     grossRevenue: totals.grossRevenue,

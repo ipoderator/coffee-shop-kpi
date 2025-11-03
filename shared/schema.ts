@@ -81,6 +81,9 @@ export interface ProfitabilityDatasetInfo {
   periodStart: string;
   periodEnd: string;
   rows: number;
+  totalBonuses?: number;
+  totalDiscounts?: number;
+  totalBonusAccrued?: number;
 }
 
 export interface ProfitabilityKPIs {
@@ -269,6 +272,37 @@ export interface ProfitabilityTableResponse {
   };
   rows: ProfitabilityTableEntry[];
   hasCogs: boolean;
+}
+
+export interface TopProduct {
+  itemName: string;
+  unitCost: number; // Себестоимость за единицу (средняя)
+  averagePrice: number; // Средняя итоговая цена за единицу (после скидок/бонусов)
+  averageProfit: number; // Валовая прибыль за единицу (средняя)
+  averageMargin: number; // Валовая маржа за единицу (%)
+  totalProfit: number; // Совокупная валовая прибыль по позиции за период
+  salesCount: number; // Количество продаж за период
+}
+
+export interface PeriodSummary {
+  netRevenue: number; // Выручка после скидок и бонусов
+  cogs: number; // Себестоимость (COGS)
+  grossProfit: number; // Валовая прибыль
+  grossMargin: number; // Валовая маржа (%)
+  totalBonuses: number; // Списано бонусов за период
+  totalDiscounts: number; // Скидки за период
+  totalBonusAccrued: number; // Начислено бонусов за период
+  totalLosses: number; // Общие потери (скидки + бонусы) в рублях
+  totalLossesPercent: number; // Общие потери в процентах от выручки
+  bonusesPercent: number; // Потери от бонусов в процентах от валовой выручки
+  discountsPercent: number; // Потери от скидок в процентах от валовой выручки
+}
+
+export interface TopProductsResponse {
+  products: TopProduct[];
+  bottomProducts: TopProduct[];
+  negativeMarginProducts: TopProduct[];
+  periodSummary: PeriodSummary;
 }
 
 // Users table for authentication

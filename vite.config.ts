@@ -7,6 +7,7 @@ export default defineConfig({
     react({
       jsxRuntime: 'automatic',
       jsxImportSource: 'react',
+      // Fast Refresh включен по умолчанию в @vitejs/plugin-react
       babel: {
         plugins: [],
       },
@@ -26,15 +27,41 @@ export default defineConfig({
   },
   server: {
     host: '0.0.0.0',
-    port: 5000,
+    port: parseInt(process.env.PORT || '5001', 10),
     strictPort: true,
-    hmr: {
-      clientPort: 443,
-      protocol: 'wss',
+    // Настройки HMR для локальной разработки
+    hmr: (() => {
+      const isDev = process.env.NODE_ENV === 'development' || !process.env.NODE_ENV;
+      const port = parseInt(process.env.PORT || '5001', 10);
+      if (isDev) {
+        // Используем стандартный WebSocket для локальной разработки
+        return {
+          protocol: 'ws',
+          host: 'localhost',
+          port: port,
+        };
+      } else {
+        // Для Replit/продакшена используем wss
+        return {
+          clientPort: 443,
+          protocol: 'wss',
+        };
+      }
+    })(),
+    watch: {
+      // Отслеживаем изменения в shared файлах
+      ignored: ['**/node_modules/**', '**/dist/**'],
     },
     fs: {
       strict: true,
       deny: ['**/.*'],
+      // Разрешаем доступ к shared файлам для HMR
+      allow: ['..'],
     },
+  },
+  optimizeDeps: {
+    // Не предварительно собираем эти зависимости для более быстрой перезагрузки
+    exclude: [],
+    include: ['react', 'react-dom', 'react-router-dom'],
   },
 });

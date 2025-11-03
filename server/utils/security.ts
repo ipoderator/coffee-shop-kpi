@@ -4,7 +4,14 @@ import helmet from 'helmet';
 import { Request, Response, NextFunction, type Express } from 'express';
 import { randomBytes } from 'crypto';
 
-// Rate limiting для регистрации
+const isDevelopment = process.env.NODE_ENV === 'development' || !process.env.NODE_ENV;
+
+// Логируем режим rate limiting при запуске
+if (isDevelopment) {
+  console.log('🔓 Rate limiting отключен в режиме разработки');
+}
+
+// Rate limiting для регистрации (отключен в режиме разработки)
 export const registerRateLimit = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 час
   max: 3, // максимум 3 регистрации в час с одного IP
@@ -14,9 +21,11 @@ export const registerRateLimit = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  // В режиме разработки полностью отключаем rate limiting
+  skip: () => isDevelopment,
 });
 
-// Rate limiting для смены пароля
+// Rate limiting для смены пароля (отключен в режиме разработки)
 export const passwordChangeRateLimit = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 час
   max: 3, // максимум 3 попытки смены пароля в час
@@ -26,39 +35,32 @@ export const passwordChangeRateLimit = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  // В режиме разработки полностью отключаем rate limiting
+  skip: () => isDevelopment,
 });
 
-// Общий rate limiting для API
+// Общий rate limiting для API (отключен в режиме разработки)
 export const apiRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 минут
-  max: process.env.NODE_ENV === 'production' ? 100 : 1000, // В разработке больше лимитов
+  max: process.env.NODE_ENV === 'production' ? 100 : Infinity, // В разработке без лимитов
   message: {
     success: false,
     message: 'Слишком много запросов. Попробуйте позже.',
   },
   standardHeaders: true,
   legacyHeaders: false,
-  // В режиме разработки пропускаем некоторые запросы
-  skip: (req) => {
-    if (process.env.NODE_ENV !== 'production') {
-      // Пропускаем статические файлы и hot reload запросы
-      return (
-        req.path.includes('/assets/') ||
-        req.path.includes('/vite') ||
-        req.path.includes('/@vite') ||
-        req.path.includes('/__vite_ping')
-      );
-    }
-    return false;
-  },
+  // В режиме разработки полностью отключаем rate limiting
+  skip: () => isDevelopment,
 });
 
-// Slow down для подозрительной активности
+// Slow down для подозрительной активности (отключен в режиме разработки)
 export const speedLimiter = slowDown({
   windowMs: 15 * 60 * 1000, // 15 минут
-  delayAfter: process.env.NODE_ENV === 'production' ? 50 : 500, // В разработке больше запросов
-  delayMs: () => (process.env.NODE_ENV === 'production' ? 500 : 100), // Меньше задержки в разработке
-  maxDelayMs: process.env.NODE_ENV === 'production' ? 20000 : 2000, // Максимум 2 секунды в разработке
+  delayAfter: process.env.NODE_ENV === 'production' ? 50 : Infinity, // В разработке без ограничений
+  delayMs: () => (process.env.NODE_ENV === 'production' ? 500 : 0), // Без задержки в разработке
+  maxDelayMs: process.env.NODE_ENV === 'production' ? 20000 : 0, // Без задержки в разработке
+  // В режиме разработки полностью отключаем slow down
+  skip: () => isDevelopment,
 });
 
 // Настройки Helmet для безопасности заголовков
