@@ -92,3 +92,32 @@ The frontend is built with React and TypeScript, leveraging Tailwind CSS and Sha
   - **Net revenue calculation**: Amount now correctly calculated as (Income - Refunds) for accurate financial metrics
   - Refund columns detected: "Чеков возврата прихода", "Возврат наличными", "Возврат безналичными", etc.
   - **Known limitation**: PDF parser doesn't support refunds yet (uses regex-based extraction, different from Excel/CSV column detection)
+
+## Recent Changes (November 3, 2025) - Replit Setup
+
+- **Replit Environment Configuration**:
+  - Installed project dependencies (npm install)
+  - Configured Vite for Replit proxy: host 0.0.0.0, port 5000, HMR with WSS
+  - Added Express trust proxy setting for rate limiting compatibility
+  - Generated and configured JWT_SECRET in .env file
+  - Set up workflow "Coffee KPI App" running on port 5000
+
+- **Z-Report Parser Verification**:
+  - Fixed LSP errors in profitabilityImport.ts (XLSX import)
+  - Tested parser with real Z-report data (Заказанные позиции format)
+  - Verified parser correctly processes columns A-R from Excel files
+  - Parser successfully aggregates 11,224 detailed transaction rows into 123 daily records
+  - Extracts data from columns: Смена (дата), Смена (номер), Номер чека, Себестоимость, Цена, Цена со скидкой, etc.
+
+- **Profitability Calculation Review**:
+  - Confirmed comprehensive profitability logic is implemented
+  - Metrics calculated: Gross/Net Revenue, Returns, Corrections, Average Check, Return Rate
+  - COGS integration: Uses cogsTotal from records or cogsDaily table
+  - Profitability metrics: Gross Profit, Gross Margin %
+  - Trend analysis: 7-day and 28-day moving averages, Revenue growth rate
+
+- **Database**: DATABASE_URL environment variable configured and ready
+
+- **Known Issues**:
+  - YTimes integration scheduler not started (requires YTIMES_LOGIN, YTIMES_ACCOUNT, YTIMES_PASSWORD environment variables) - optional feature
+  - PostCSS warning from Vite (non-critical)
