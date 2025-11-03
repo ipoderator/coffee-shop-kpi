@@ -44,6 +44,8 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { DateRange } from 'react-day-picker';
 import { TopProductsVisualization } from '@/components/TopProductsVisualization';
+import { FinancialRecommendations } from '@/components/FinancialRecommendations';
+import { RevenueMarginIssues } from '@/components/RevenueMarginIssues';
 
 const formatCurrency = (value: number) => {
   if (!Number.isFinite(value)) return '0 ₽';
@@ -84,7 +86,7 @@ export default function ProfitabilityPage() {
   const [dateRange, setDateRange] = useState<DateRange | undefined>(() => getInitialRange());
   const [isUploading, setIsUploading] = useState(false);
   const [exporting, setExporting] = useState<'csv' | 'pdf' | null>(null);
-  const [activeTab, setActiveTab] = useState<'import' | 'kpi' | 'tables'>('import');
+  const [activeTab, setActiveTab] = useState<'import' | 'kpi'>('import');
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   const [productsView, setProductsView] = useState<'top' | 'bottom'>('top');
 
@@ -516,20 +518,27 @@ export default function ProfitabilityPage() {
         </p>
       </motion.div>
 
+      {/* Рекомендации по улучшению финансов */}
+      {hasDatasetSelected && analytics && topProductsData && (
+        <FinancialRecommendations analytics={analytics} topProductsData={topProductsData} />
+      )}
+
+      {/* Недочеты в выручке и марже */}
+      {hasDatasetSelected && analytics && (
+        <RevenueMarginIssues analytics={analytics} />
+      )}
+
       <Tabs
         value={activeTab}
-        onValueChange={(value) => setActiveTab(value as 'import' | 'kpi' | 'tables')}
+        onValueChange={(value) => setActiveTab(value as 'import' | 'kpi')}
         className="space-y-6"
       >
-        <TabsList className="grid w-full sm:w-auto grid-cols-1 sm:grid-cols-3 gap-1 rounded-xl bg-muted/50 p-1">
+        <TabsList className="grid w-full sm:w-auto grid-cols-1 sm:grid-cols-2 gap-1 rounded-xl bg-muted/50 p-1">
           <TabsTrigger value="import" className="text-sm sm:text-base">
             Импорт данных
           </TabsTrigger>
           <TabsTrigger value="kpi" className="text-sm sm:text-base">
             Сводка KPI
-          </TabsTrigger>
-          <TabsTrigger value="tables" className="text-sm sm:text-base">
-            Таблицы и экспорт
           </TabsTrigger>
         </TabsList>
 
@@ -1033,6 +1042,9 @@ export default function ProfitabilityPage() {
                               {((topProductsData.periodSummary.totalLossesPercent ?? 0)).toFixed(2)}%
                             </span>
                           </div>
+                          <div className="text-xs text-muted-foreground">
+                            Скидки + Бонусы (списано)
+                          </div>
                         </div>
                       </div>
                       
@@ -1110,8 +1122,16 @@ export default function ProfitabilityPage() {
                     <div className="mt-4 pt-4 border-t border-border/50">
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs text-muted-foreground">
                         <div>
+                          <span className="font-semibold text-foreground">Формула расчета общих потерь:</span>
+                          <span className="ml-2">Скидки + Бонусы (списано)</span>
+                        </div>
+                        <div>
                           <span className="font-semibold text-foreground">Формула расчета бонусов:</span>
                           <span className="ml-2">Сумма столбца "цена" - Сумма столбца "цена со скидкой"</span>
+                        </div>
+                        <div>
+                          <span className="font-semibold text-foreground">Формула расчета скидок:</span>
+                          <span className="ml-2">Сумма столбца "Скидка, руб" + пересчет из "Скидка, %"</span>
                         </div>
                         <div>
                           <span className="font-semibold text-foreground">Период:</span>
@@ -1124,92 +1144,6 @@ export default function ProfitabilityPage() {
                   </Card>
                 </motion.div>
               )}
-            </>
-          )}
-        </TabsContent>
-
-        <TabsContent value="tables" className="space-y-6 focus-visible:outline-none">
-          {renderDatasetInfo()}
-
-          {hasDatasetSelected && analyticsQuery.isLoading && (
-            <Card className="p-6">
-              <p className="text-muted-foreground">Формируем таблицы...</p>
-            </Card>
-          )}
-
-          {analyticsErrorMessage && (
-            <Card className="p-6">
-              <p className="text-destructive">{analyticsErrorMessage}</p>
-            </Card>
-          )}
-
-          {!hasDatasetSelected && !datasetsQuery.isLoading && (
-            <Card className="p-6">
-              <p className="text-muted-foreground">
-                Импортируйте Z-отчеты и выберите набор данных, чтобы перейти к экспорту.
-              </p>
-            </Card>
-          )}
-
-          {analytics && (
-            <>
-              <Card className="p-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <h3 className="text-lg font-semibold">Экспорт отчётов</h3>
-                  <p className="text-sm text-muted-foreground">
-                    Скачайте сводный CSV или PDF отчёт с учётом выбранного периода.
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-3">
-                  <Button
-                    variant="outline"
-                    className="flex items-center gap-2"
-                    onClick={() => handleExport('csv')}
-                    disabled={exporting !== null}
-                  >
-                    <Download className="w-4 h-4" />
-                    {exporting === 'csv' ? 'Экспорт...' : 'Экспорт CSV'}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="flex items-center gap-2"
-                    onClick={() => handleExport('pdf')}
-                    disabled={exporting !== null}
-                  >
-                    <Download className="w-4 h-4" />
-                    {exporting === 'pdf' ? 'Экспорт...' : 'Экспорт PDF'}
-                  </Button>
-                </div>
-              </Card>
-
-              <Card className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Дата</TableHead>
-                      <TableHead>Валовая выручка</TableHead>
-                      <TableHead>Возвраты</TableHead>
-                      <TableHead>Коррекции</TableHead>
-                      <TableHead>Чистая выручка</TableHead>
-                      <TableHead>Чеков прихода</TableHead>
-                      <TableHead>Чеков возврата</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {analytics.table.map((row) => (
-                      <TableRow key={row.date}>
-                        <TableCell>{new Date(row.date).toLocaleDateString('ru-RU')}</TableCell>
-                        <TableCell>{formatCurrency(row.grossRevenue)}</TableCell>
-                        <TableCell>{formatCurrency(row.returns)}</TableCell>
-                        <TableCell>{formatCurrency(row.corrections)}</TableCell>
-                        <TableCell>{formatCurrency(row.netRevenue)}</TableCell>
-                        <TableCell>{row.incomeChecks}</TableCell>
-                        <TableCell>{row.returnChecks}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </Card>
             </>
           )}
         </TabsContent>

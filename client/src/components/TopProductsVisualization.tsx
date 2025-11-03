@@ -6,17 +6,19 @@ import {
   BarElement,
   PointElement,
   LineElement,
+  ArcElement,
   Title,
   Tooltip,
   Legend,
   ChartOptions,
   Filler,
 } from 'chart.js';
-import { Bar, Line } from 'react-chartjs-2';
+import { Pie } from 'react-chartjs-2';
 import { Card } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { TrendingUp, TrendingDown, Package, DollarSign, Percent, Award, AlertCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { Table, TableBody, TableCell, TableRow } from '@/components/ui/table';
 import type { TopProduct } from '@shared/schema';
 
 ChartJS.register(
@@ -25,6 +27,7 @@ ChartJS.register(
   BarElement,
   PointElement,
   LineElement,
+  ArcElement,
   Title,
   Tooltip,
   Legend,
@@ -130,98 +133,73 @@ export function TopProductsVisualization({ products, viewType }: TopProductsVisu
 
   const colors = getChartColors();
 
-  // График 1: Комбинированный - Маржа и Прибыль за единицу
+  // График 1: Круговая диаграмма - Маржа
   const combinedData = useMemo(() => {
     const isNegative = viewType === 'bottom';
     const style = typeof window !== 'undefined' ? getComputedStyle(document.documentElement) : null;
     const chartColor1 = style?.getPropertyValue('--chart-1').trim() || colors.chart1;
     const chartColor2 = style?.getPropertyValue('--chart-2').trim() || colors.chart2;
+    const chartColor3 = style?.getPropertyValue('--chart-3').trim() || colors.chart3;
+    
+    // Генерируем цвета для каждого сегмента
+    const backgroundColors = products.map((p, idx) => {
+      const value = p.averageMargin;
+      if (value < 0) return `hsl(${colors.destructive} / 0.8)`;
+      if (isNegative) return `hsl(${colors.destructive} / 0.6)`;
+      if (idx === stats.bestMarginIdx) return `hsl(${colors.success} / 0.9)`;
+      
+      // Чередуем цвета для разнообразия
+      if (idx % 3 === 0) return `hsl(${chartColor1} / 0.8)`;
+      if (idx % 3 === 1) return `hsl(${chartColor2} / 0.8)`;
+      return `hsl(${chartColor3} / 0.8)`;
+    });
+
+    const borderColors = products.map((p, idx) => {
+      const value = p.averageMargin;
+      if (value < 0) return `hsl(${colors.destructive})`;
+      if (isNegative) return `hsl(${colors.destructive})`;
+      if (idx === stats.bestMarginIdx) return `hsl(${colors.success})`;
+      
+      if (idx % 3 === 0) return `hsl(${chartColor1})`;
+      if (idx % 3 === 1) return `hsl(${chartColor2})`;
+      return `hsl(${chartColor3})`;
+    });
     
     return {
       labels,
       datasets: [
         {
-          type: 'bar' as const,
           label: 'Маржа (%)',
           data: products.map((p) => p.averageMargin),
-          backgroundColor: (context: any) => {
-            const idx = context.dataIndex;
-            const value = products[idx].averageMargin;
-            const chart = context.chart;
-            const { ctx, chartArea } = chart;
-
-            if (!chartArea) {
-              if (value < 0) return `hsl(${colors.destructive} / 0.6)`;
-              if (isNegative) return `hsl(${colors.destructive} / 0.4)`;
-              if (idx === stats.bestMarginIdx) return `hsl(${colors.success} / 0.7)`;
-              return `hsl(${chartColor1} / 0.6)`;
-            }
-
-            const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
-            
-            if (value < 0) {
-              gradient.addColorStop(0, `hsl(${colors.destructive} / 0.9)`);
-              gradient.addColorStop(1, `hsl(${colors.destructive} / 0.6)`);
-            } else if (isNegative) {
-              gradient.addColorStop(0, `hsl(${colors.destructive} / 0.7)`);
-              gradient.addColorStop(1, `hsl(${colors.destructive} / 0.4)`);
-            } else if (idx === stats.bestMarginIdx) {
-              gradient.addColorStop(0, `hsl(${colors.success} / 0.9)`);
-              gradient.addColorStop(1, `hsl(${colors.success} / 0.6)`);
-            } else {
-              gradient.addColorStop(0, `hsl(${chartColor1} / 0.7)`);
-              gradient.addColorStop(1, `hsl(${chartColor1} / 0.4)`);
-            }
-
-            return gradient;
-          },
-          borderColor: (context: any) => {
-            const idx = context.dataIndex;
-            const value = products[idx].averageMargin;
-            if (value < 0) return `hsl(${colors.destructive})`;
-            if (isNegative) return `hsl(${colors.destructive})`;
-            if (idx === stats.bestMarginIdx) return `hsl(${colors.success})`;
-            return `hsl(${chartColor1})`;
-          },
+          backgroundColor: backgroundColors,
+          borderColor: borderColors,
           borderWidth: 2,
-          borderRadius: 12,
-          borderSkipped: false,
-          yAxisID: 'y',
-        },
-        {
-          type: 'line' as const,
-          label: 'Прибыль за ед. (₽)',
-          data: products.map((p) => p.averageProfit),
-          borderColor: `hsl(${chartColor2})`,
-          backgroundColor: (context: any) => {
-            const chart = context.chart;
-            const { ctx, chartArea } = chart;
-            if (!chartArea) return `hsl(${chartColor2} / 0.1)`;
-            const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
-            gradient.addColorStop(0, `hsl(${chartColor2} / 0.15)`);
-            gradient.addColorStop(1, `hsl(${chartColor2} / 0.05)`);
-            return gradient;
-          },
-          borderWidth: 3,
-          pointRadius: 4,
-          pointHoverRadius: 6,
-          pointBackgroundColor: `hsl(${chartColor2})`,
-          pointBorderColor: '#fff',
-          pointBorderWidth: 2,
-          fill: true,
-          tension: 0.35,
-          yAxisID: 'y1',
         },
       ],
     };
   }, [products, labels, viewType, colors, stats]);
 
-  // График 2: Количество продаж
+  // График 2: Круговая диаграмма - Количество продаж
   const salesCountData = useMemo(() => {
     const style = typeof window !== 'undefined' ? getComputedStyle(document.documentElement) : null;
     const chartColor1 = style?.getPropertyValue('--chart-1').trim() || colors.chart1;
     const chartColor2 = style?.getPropertyValue('--chart-2').trim() || colors.chart2;
     const chartColor3 = style?.getPropertyValue('--chart-3').trim() || colors.chart3;
+    
+    // Генерируем цвета для каждого сегмента на основе количества продаж
+    const backgroundColors = products.map((p, idx) => {
+      const ratio = p.salesCount / stats.maxSales;
+      if (ratio > 0.8) return `hsl(${chartColor2} / 0.8)`;
+      if (ratio > 0.5) return `hsl(${chartColor1} / 0.8)`;
+      return `hsl(${chartColor3} / 0.8)`;
+    });
+
+    const borderColors = products.map((p, idx) => {
+      const ratio = p.salesCount / stats.maxSales;
+      if (ratio > 0.8) return `hsl(${chartColor2})`;
+      if (ratio > 0.5) return `hsl(${chartColor1})`;
+      return `hsl(${chartColor3})`;
+    });
     
     return {
       labels,
@@ -229,55 +207,46 @@ export function TopProductsVisualization({ products, viewType }: TopProductsVisu
         {
           label: 'Количество продаж',
           data: products.map((p) => p.salesCount),
-          backgroundColor: (context: any) => {
-            const idx = context.dataIndex;
-            const value = products[idx].salesCount;
-            const ratio = value / stats.maxSales;
-            const chart = context.chart;
-            const { ctx, chartArea } = chart;
-
-            if (!chartArea) {
-              if (ratio > 0.8) return `hsl(${chartColor2} / 0.8)`;
-              if (ratio > 0.5) return `hsl(${chartColor1} / 0.7)`;
-              return `hsl(${chartColor3} / 0.6)`;
-            }
-
-            const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
-            
-            if (ratio > 0.8) {
-              gradient.addColorStop(0, `hsl(${chartColor2} / 0.9)`);
-              gradient.addColorStop(1, `hsl(${chartColor2} / 0.6)`);
-            } else if (ratio > 0.5) {
-              gradient.addColorStop(0, `hsl(${chartColor1} / 0.7)`);
-              gradient.addColorStop(1, `hsl(${chartColor1} / 0.4)`);
-            } else {
-              gradient.addColorStop(0, `hsl(${chartColor3} / 0.65)`);
-              gradient.addColorStop(1, `hsl(${chartColor3} / 0.35)`);
-            }
-
-            return gradient;
-          },
-          borderColor: (context: any) => {
-            const idx = context.dataIndex;
-            const value = products[idx].salesCount;
-            const ratio = value / stats.maxSales;
-            if (ratio > 0.8) return `hsl(${chartColor2})`;
-            if (ratio > 0.5) return `hsl(${chartColor1})`;
-            return `hsl(${chartColor3})`;
-          },
+          backgroundColor: backgroundColors,
+          borderColor: borderColors,
           borderWidth: 2,
-          borderRadius: 12,
-          borderSkipped: false,
         },
       ],
     };
   }, [products, labels, colors, stats]);
 
-  // График 3: Совокупная прибыль
+  // График 3: Круговая диаграмма - Совокупная прибыль
   const totalProfitData = useMemo(() => {
     const isNegative = viewType === 'bottom';
     const style = typeof window !== 'undefined' ? getComputedStyle(document.documentElement) : null;
+    const chartColor1 = style?.getPropertyValue('--chart-1').trim() || colors.chart1;
+    const chartColor2 = style?.getPropertyValue('--chart-2').trim() || colors.chart2;
+    const chartColor3 = style?.getPropertyValue('--chart-3').trim() || colors.chart3;
     const emeraldColor = style?.getPropertyValue('--emerald').trim() || colors.emerald;
+    
+    // Генерируем цвета для каждого сегмента
+    const backgroundColors = products.map((p, idx) => {
+      const value = p.totalProfit;
+      if (value < 0) return `hsl(${colors.destructive} / 0.8)`;
+      if (isNegative) return `hsl(${colors.destructive} / 0.6)`;
+      if (idx === stats.bestProfitIdx) return `hsl(${colors.success} / 0.9)`;
+      
+      // Чередуем цвета для разнообразия
+      if (idx % 3 === 0) return `hsl(${emeraldColor} / 0.8)`;
+      if (idx % 3 === 1) return `hsl(${chartColor2} / 0.8)`;
+      return `hsl(${chartColor3} / 0.8)`;
+    });
+
+    const borderColors = products.map((p, idx) => {
+      const value = p.totalProfit;
+      if (value < 0) return `hsl(${colors.destructive})`;
+      if (isNegative) return `hsl(${colors.destructive})`;
+      if (idx === stats.bestProfitIdx) return `hsl(${colors.success})`;
+      
+      if (idx % 3 === 0) return `hsl(${emeraldColor})`;
+      if (idx % 3 === 1) return `hsl(${chartColor2})`;
+      return `hsl(${chartColor3})`;
+    });
     
     return {
       labels,
@@ -285,48 +254,9 @@ export function TopProductsVisualization({ products, viewType }: TopProductsVisu
         {
           label: 'Совокупная прибыль',
           data: products.map((p) => p.totalProfit),
-          backgroundColor: (context: any) => {
-            const idx = context.dataIndex;
-            const value = products[idx].totalProfit;
-            const chart = context.chart;
-            const { ctx, chartArea } = chart;
-
-            if (!chartArea) {
-              if (value < 0) return `hsl(${colors.destructive} / 0.7)`;
-              if (isNegative) return `hsl(${colors.destructive} / 0.5)`;
-              if (idx === stats.bestProfitIdx) return `hsl(${colors.success} / 0.8)`;
-              return `hsl(${emeraldColor} / 0.7)`;
-            }
-
-            const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
-            
-            if (value < 0) {
-              gradient.addColorStop(0, `hsl(${colors.destructive} / 0.9)`);
-              gradient.addColorStop(1, `hsl(${colors.destructive} / 0.6)`);
-            } else if (isNegative) {
-              gradient.addColorStop(0, `hsl(${colors.destructive} / 0.7)`);
-              gradient.addColorStop(1, `hsl(${colors.destructive} / 0.4)`);
-            } else if (idx === stats.bestProfitIdx) {
-              gradient.addColorStop(0, `hsl(${colors.success} / 0.9)`);
-              gradient.addColorStop(1, `hsl(${colors.success} / 0.6)`);
-            } else {
-              gradient.addColorStop(0, `hsl(${emeraldColor} / 0.75)`);
-              gradient.addColorStop(1, `hsl(${emeraldColor} / 0.4)`);
-            }
-
-            return gradient;
-          },
-          borderColor: (context: any) => {
-            const idx = context.dataIndex;
-            const value = products[idx].totalProfit;
-            if (value < 0) return `hsl(${colors.destructive})`;
-            if (isNegative) return `hsl(${colors.destructive})`;
-            if (idx === stats.bestProfitIdx) return `hsl(${colors.success})`;
-            return `hsl(${emeraldColor})`;
-          },
+          backgroundColor: backgroundColors,
+          borderColor: borderColors,
           borderWidth: 2,
-          borderRadius: 12,
-          borderSkipped: false,
         },
       ],
     };
@@ -387,13 +317,6 @@ export function TopProductsVisualization({ products, viewType }: TopProductsVisu
                 `Маржа: ${formatPercent(product.averageMargin / 100)}`,
                 `Цена: ${formatCurrency(product.averagePrice)}`,
                 `Себестоимость: ${formatCurrency(product.unitCost)}`,
-              ];
-            }
-            if (datasetLabel.includes('Прибыль за ед')) {
-              return [
-                `Прибыль за ед.: ${formatCurrency(product.averageProfit)}`,
-                `Продано: ${product.salesCount} шт.`,
-                `Всего прибыль: ${formatCurrency(product.totalProfit)}`,
               ];
             }
             if (datasetLabel.includes('Количество продаж')) {
@@ -486,47 +409,167 @@ export function TopProductsVisualization({ products, viewType }: TopProductsVisu
     },
   };
 
-  const combinedOptions: ChartOptions<'bar'> = {
-    ...commonOptions,
-    scales: {
-      ...commonOptions.scales,
-      y: {
-        ...commonOptions.scales?.y,
-        ticks: {
-          ...commonOptions.scales?.y?.ticks,
-          callback: function (value) {
-            if (typeof value === 'number') {
-              return formatPercent(value / 100);
+  // Единый стиль для всех круговых диаграмм
+  const createPieOptions = (
+    generateLegendLabel: (value: number) => string,
+    generateTooltipLabels: (product: TopProduct, value: number) => string[],
+  ): ChartOptions<'pie'> => ({
+    responsive: true,
+    maintainAspectRatio: true,
+    aspectRatio: 1.5,
+    interaction: {
+      mode: 'point' as const,
+      intersect: true,
+    },
+    plugins: {
+      legend: {
+        display: false,
+        labels: {
+          usePointStyle: true,
+          padding: 15,
+          font: {
+            size: 13,
+            weight: 'bold',
+            family: 'system-ui, -apple-system, sans-serif',
+          },
+          color: 'hsl(var(--foreground))',
+          generateLabels: (chart) => {
+            const data = chart.data;
+            if (data.labels && data.datasets) {
+              return data.labels.map((label, index) => {
+                const dataset = data.datasets[0];
+                const value = Array.isArray(dataset.data) ? dataset.data[index] : 0;
+                const backgroundColor = Array.isArray(dataset.backgroundColor)
+                  ? dataset.backgroundColor[index]
+                  : dataset.backgroundColor;
+                return {
+                  text: `${label}: ${generateLegendLabel(typeof value === 'number' ? value : 0)}`,
+                  fillStyle: typeof backgroundColor === 'string' ? backgroundColor : '#000',
+                  hidden: false,
+                  index,
+                };
+              });
             }
-            return value;
+            return [];
+          },
+        },
+      },
+      tooltip: {
+        backgroundColor: 'rgba(0, 0, 0, 0.92)',
+        titleColor: '#ffffff',
+        bodyColor: '#ffffff',
+        borderColor: 'hsl(var(--primary) / 0.6)',
+        borderWidth: 2,
+        padding: 20,
+        displayColors: true,
+        cornerRadius: 16,
+        titleFont: {
+          size: 15,
+          weight: 'bold',
+          family: 'system-ui, -apple-system, sans-serif',
+        },
+        bodyFont: {
+          size: 14,
+          weight: 'bold',
+          family: 'system-ui, -apple-system, sans-serif',
+        },
+        callbacks: {
+          title: (context) => {
+            const index = context[0].dataIndex;
+            return products[index].itemName;
+          },
+          label: (context) => {
+            const index = context.dataIndex;
+            const product = products[index];
+            const value = typeof context.parsed === 'number' ? context.parsed : 0;
+            return generateTooltipLabels(product, value);
           },
         },
       },
     },
+  });
+
+  const combinedOptions = createPieOptions(
+    (value) => formatPercent(value / 100),
+    (product, value) => [
+      `Маржа: ${formatPercent(product.averageMargin / 100)}`,
+      `Цена: ${formatCurrency(product.averagePrice)}`,
+      `Себестоимость: ${formatCurrency(product.unitCost)}`,
+      `Продано: ${product.salesCount} шт.`,
+      `Прибыль за ед.: ${formatCurrency(product.averageProfit)}`,
+    ],
+  );
+
+  const salesOptions = createPieOptions(
+    (value) => `${value.toLocaleString()} шт.`,
+    (product, value) => [
+      `Продано: ${product.salesCount} шт.`,
+      `Маржа: ${formatPercent(product.averageMargin / 100)}`,
+      `Прибыль: ${formatCurrency(product.totalProfit)}`,
+      `Цена: ${formatCurrency(product.averagePrice)}`,
+    ],
+  );
+
+  const profitOptions = createPieOptions(
+    (value) => formatCurrency(value),
+    (product, value) => [
+      `Прибыль: ${formatCurrency(product.totalProfit)}`,
+      `Продано: ${product.salesCount} шт.`,
+      `Прибыль за ед.: ${formatCurrency(product.averageProfit)}`,
+      `Маржа: ${formatPercent(product.averageMargin / 100)}`,
+      `Цена: ${formatCurrency(product.averagePrice)}`,
+    ],
+  );
+
+  // Функция для получения цвета сегмента
+  const getSegmentColor = (chartData: any, index: number) => {
+    const bgColors = chartData.datasets[0].backgroundColor;
+    return Array.isArray(bgColors) ? bgColors[index] : bgColors;
   };
 
-  const salesOptions: ChartOptions<'bar'> = {
-    ...commonOptions,
-  };
-
-  const profitOptions: ChartOptions<'bar'> = {
-    ...commonOptions,
-    scales: {
-      ...commonOptions.scales,
-      y: {
-        ...commonOptions.scales?.y,
-        ticks: {
-          ...commonOptions.scales?.y?.ticks,
-          callback: function (value) {
-            if (typeof value === 'number') {
-              return formatCurrency(value);
-            }
-            return value;
-          },
-        },
-      },
-    },
-  };
+  // Компонент таблицы для легенды
+  const LegendTable = ({ 
+    chartData, 
+    formatValue 
+  }: { 
+    chartData: any; 
+    formatValue: (product: TopProduct, value: number) => string;
+  }) => (
+    <div className="flex-shrink-0 w-full md:w-auto md:min-w-[280px]">
+      <div className="bg-muted/30 rounded-lg border border-border/50 p-3">
+        <Table>
+          <TableBody>
+            {products.map((product, idx) => {
+              const value = Array.isArray(chartData.datasets[0].data) 
+                ? chartData.datasets[0].data[idx] 
+                : 0;
+              const color = getSegmentColor(chartData, idx);
+              return (
+                <TableRow key={idx} className="border-b border-border/30 hover:bg-background/50 transition-colors">
+                  <TableCell className="p-2.5">
+                    <div className="flex items-center gap-2.5">
+                      <div
+                        className="w-3.5 h-3.5 rounded-full flex-shrink-0 border-2 border-border/20"
+                        style={{ backgroundColor: color }}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-semibold text-foreground truncate leading-tight">
+                          {getShortName(product.itemName, 35)}
+                        </div>
+                        <div className="text-xs font-medium text-muted-foreground mt-0.5">
+                          {formatValue(product, typeof value === 'number' ? value : 0)}
+                        </div>
+                      </div>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </div>
+    </div>
+  );
 
   return (
     <div className="space-y-6">
@@ -587,8 +630,7 @@ export function TopProductsVisualization({ products, viewType }: TopProductsVisu
         <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="combined" className="flex items-center gap-2 text-sm">
             <Percent className="w-4 h-4" />
-            <span className="hidden sm:inline">Маржа и прибыль</span>
-            <span className="sm:hidden">Маржа</span>
+            <span>Маржа</span>
           </TabsTrigger>
           <TabsTrigger value="sales" className="flex items-center gap-2 text-sm">
             <Package className="w-4 h-4" />
@@ -608,7 +650,7 @@ export function TopProductsVisualization({ products, viewType }: TopProductsVisu
                 <div className="flex items-center gap-2">
                   <Percent className="w-5 h-5 text-primary" />
                   <h4 className="text-xl font-bold bg-gradient-to-r from-foreground via-primary/80 to-foreground/70 bg-clip-text text-transparent">
-                    Маржа и прибыль за единицу
+                    Маржа по позициям
                   </h4>
                 </div>
                 {stats.bestMarginIdx >= 0 && (
@@ -618,20 +660,22 @@ export function TopProductsVisualization({ products, viewType }: TopProductsVisu
                   </Badge>
                 )}
               </div>
-              <p className="text-sm text-muted-foreground flex items-center gap-2">
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="w-3 h-3 rounded-sm bg-chart-1"></span>
-                  <span>Маржа (%)</span>
-                </span>
-                <span className="text-border">•</span>
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="w-3 h-3 rounded-sm bg-chart-2"></span>
-                  <span>Прибыль за ед. (₽)</span>
-                </span>
+              <p className="text-sm text-muted-foreground">
+                Распределение маржи по позициям
               </p>
             </div>
             <div className="relative z-10 w-full">
-              <Bar data={combinedData} options={combinedOptions} />
+              <div className="flex flex-col md:flex-row gap-6 items-start">
+                <div className="flex-1 flex justify-center md:justify-start">
+                  <div className="w-full max-w-md">
+                    <Pie data={combinedData} options={combinedOptions} />
+                  </div>
+                </div>
+                <LegendTable 
+                  chartData={combinedData}
+                  formatValue={(product, value) => formatPercent(product.averageMargin / 100)}
+                />
+              </div>
             </div>
           </Card>
         </TabsContent>
@@ -656,7 +700,17 @@ export function TopProductsVisualization({ products, viewType }: TopProductsVisu
               </p>
             </div>
             <div className="relative z-10 w-full">
-              <Bar data={salesCountData} options={salesOptions} />
+              <div className="flex flex-col md:flex-row gap-6 items-start">
+                <div className="flex-1 flex justify-center md:justify-start">
+                  <div className="w-full max-w-md">
+                    <Pie data={salesCountData} options={salesOptions} />
+                  </div>
+                </div>
+                <LegendTable 
+                  chartData={salesCountData}
+                  formatValue={(product, value) => `${product.salesCount.toLocaleString()} шт.`}
+                />
+              </div>
             </div>
           </Card>
         </TabsContent>
@@ -692,7 +746,17 @@ export function TopProductsVisualization({ products, viewType }: TopProductsVisu
               </p>
             </div>
             <div className="relative z-10 w-full">
-              <Bar data={totalProfitData} options={profitOptions} />
+              <div className="flex flex-col md:flex-row gap-6 items-start">
+                <div className="flex-1 flex justify-center md:justify-start">
+                  <div className="w-full max-w-md">
+                    <Pie data={totalProfitData} options={profitOptions} />
+                  </div>
+                </div>
+                <LegendTable 
+                  chartData={totalProfitData}
+                  formatValue={(product, value) => formatCurrency(product.totalProfit)}
+                />
+              </div>
             </div>
           </Card>
         </TabsContent>

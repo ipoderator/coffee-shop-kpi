@@ -210,6 +210,12 @@ export interface ProfitabilityParseOptions {
   maxChecksPerDay?: number;
 }
 
+export interface CashierStatistics {
+  cashierName: string;
+  totalRevenue: number;
+  shiftsCount: number;
+}
+
 export interface ProfitabilityParseResult {
   records: ProfitabilityRecordInput[];
   periodStart: Date | null;
@@ -222,6 +228,7 @@ export interface ProfitabilityParseResult {
   rowsProcessed: number;
   skippedRows: number;
   duplicateCount: number;
+  cashierStatistics?: CashierStatistics[];
 }
 
 const normalizeHeader = (value: unknown): string => {
@@ -633,7 +640,9 @@ function parseDetailedSalesFormat({
   // Агрегируем данные по чекам/сменам
   const checkSummaries = new Map<string, CheckSummary>();
   const unknownPaymentMethods = new Set<string>();
-  let missingPaymentColumnWarningAdded = false;
+  
+  // Статистика по кассирам: кассир -> { выручка, количество смен }
+  const cashierStats = new Map<string, { revenue: number; shifts: Set<string> }>();
 
   dataRows.forEach((row, index) => {
     if (
@@ -740,10 +749,6 @@ function parseDetailedSalesFormat({
     let paymentCategory = paymentClassified.category;
 
     if (paymentTypeIdx === undefined) {
-      if (!missingPaymentColumnWarningAdded) {
-        warnings.push('Колонка со способом оплаты не найдена. Все суммы учтены как безналичные.');
-        missingPaymentColumnWarningAdded = true;
-      }
       paymentCategory = 'cashless';
     } else if (paymentClassified.raw) {
       const normalizedRaw = normalizeHeader(paymentClassified.raw);
@@ -764,6 +769,12 @@ function parseDetailedSalesFormat({
     const costIdx = columnMap.cost;
     const costValue =
       costIdx !== undefined ? (parseNumber(row[costIdx]) ?? 0) : 0;
+
+    // Извлекаем кассира
+    const cashierIdx = columnMap.cashier;
+    const cashierName = cashierIdx !== undefined && row[cashierIdx] !== null && row[cashierIdx] !== undefined
+      ? String(row[cashierIdx]).trim()
+      : null;
 
     // Создаем ключ для чека: дата + смена + номер чека
     const dateKey = parsedDate.toISOString().slice(0, 10);
@@ -821,6 +832,18 @@ function parseDetailedSalesFormat({
     if (operationCategory === 'income') {
       summary.incomeAmount += absAmount; // Выручка по позиции (с учетом скидок и бонусов)
       summary.cogs.income += Math.max(0, costValue); // Себестоимость позиции
+      
+      // Агрегируем выручку по кассиру
+      if (cashierName && cashierName.length > 0) {
+        const shiftKey = `${dateKey}#${shiftNumber ?? '__default__'}`;
+        let cashierData = cashierStats.get(cashierName);
+        if (!cashierData) {
+          cashierData = { revenue: 0, shifts: new Set() };
+          cashierStats.set(cashierName, cashierData);
+        }
+        cashierData.revenue += absAmount;
+        cashierData.shifts.add(shiftKey);
+      }
     } else if (operationCategory === 'return') {
       summary.returnAmount += absAmount;
       summary.cogs.returns += Math.max(0, costValue);
@@ -978,7 +1001,35 @@ function parseDetailedSalesFormat({
     bonusUsed: columnMap.bonusUsed !== undefined ? headers[columnMap.bonusUsed] : undefined,
     paymentType: columnMap.paymentType !== undefined ? headers[columnMap.paymentType] : undefined,
     operationType: columnMap.operationType !== undefined ? headers[columnMap.operationType] : undefined,
+    cashier: columnMap.cashier !== undefined ? headers[columnMap.cashier] : undefined,
   };
+
+  // Формируем статистику по кассирам
+  const cashierStatistics: CashierStatistics[] = Array.from(cashierStats.entries())
+    .map(([cashierName, data]) => ({
+      cashierName,
+      totalRevenue: data.revenue,
+      shiftsCount: data.shifts.size,
+    }))
+    .sort((a, b) => b.totalRevenue - a.totalRevenue); // Сортируем по убыванию выручки
+
+  // Добавляем информацию о кассирах в предупреждения, если есть данные
+  if (cashierStatistics.length > 0) {
+    const topCashier = cashierStatistics[0];
+    const formatCurrency = (value: number) => {
+      return new Intl.NumberFormat('ru-RU', {
+        style: 'currency',
+        currency: 'RUB',
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+      }).format(value);
+    };
+    const cashierList = cashierStatistics
+      .map((c) => `${c.cashierName}: ${formatCurrency(c.totalRevenue)} (${c.shiftsCount} смен)`)
+      .join('; ');
+    warnings.push(`📊 Статистика по кассирам: ${cashierList}`);
+    warnings.push(`🏆 Наибольшая выручка у кассира "${topCashier.cashierName}": ${formatCurrency(topCashier.totalRevenue)} за ${topCashier.shiftsCount} ${topCashier.shiftsCount === 1 ? 'смену' : topCashier.shiftsCount < 5 ? 'смены' : 'смен'}`);
+  }
 
   return {
     records,
@@ -992,6 +1043,7 @@ function parseDetailedSalesFormat({
     rowsProcessed: dataRows.length,
     skippedRows,
     duplicateCount: 0,
+    cashierStatistics: cashierStatistics.length > 0 ? cashierStatistics : undefined,
   };
 }
 

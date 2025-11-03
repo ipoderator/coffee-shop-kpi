@@ -88,6 +88,7 @@ export function calculateBonusesAndDiscountsFromBuffer(
   const priceIdx = findColumn(['цена', 'стоимость', 'price', 'цена, руб', 'цена (руб)']);
   const priceWithDiscountIdx = findColumn(['цена со скидкой', 'цена со скидкой, руб', 'price with discount', 'final price', 'итого', 'итог']);
   const discountIdx = findColumn(['скидка, руб', 'скидка руб', 'скидка (руб)', 'discount']);
+  const discountPercentIdx = findColumn(['скидка, %', 'скидка %', 'скидка (%)', 'скидка процентов', 'discount %', 'discount percent', 'процент скидки']);
   const bonusUsedIdx = findColumn(['использовано бонусов', 'использовано бонус', 'bonus used', 'бонус', 'бонусы', 'списано бонусов']);
   const bonusAccruedIdx = findColumn(['начислено бонусов', 'начислено бонус', 'бонусы начислены', 'бонусы начислено', 'начисление бонусов', 'bonus accrued', 'бонусы начислены, руб', 'начисленные бонусы']);
   const shiftDateIdx = findColumn(['смена (дата)', 'дата смены', 'дата', 'shift date', 'дата чека']);
@@ -161,6 +162,7 @@ export function calculateBonusesAndDiscountsFromBuffer(
     const rawPrice = parseNumber(row[priceIdx]);
     const rawPriceWithDiscount = priceWithDiscountIdx !== undefined ? parseNumber(row[priceWithDiscountIdx]) : null;
     const rawDiscount = discountIdx !== undefined ? parseNumber(row[discountIdx]) : null;
+    const rawDiscountPercent = discountPercentIdx !== undefined ? parseNumber(row[discountPercentIdx]) : null;
     const rawBonusAccrued = bonusAccruedIdx !== undefined ? parseNumber(row[bonusAccruedIdx]) : null;
 
     // Суммируем все цены (включая нулевые, но исключая null/undefined)
@@ -173,8 +175,18 @@ export function calculateBonusesAndDiscountsFromBuffer(
       totalPriceWithDiscountSum += rawPriceWithDiscount;
     }
 
-    // Суммируем скидки
-    const discount = rawDiscount ?? 0;
+    // Суммируем скидки из колонки "скидка, руб"
+    let discount = rawDiscount ?? 0;
+    
+    // Если есть колонка "скидка, %", пересчитываем процент в рубли и добавляем к скидке
+    if (rawDiscountPercent !== null && Number.isFinite(rawDiscountPercent) && rawDiscountPercent > 0) {
+      if (rawPrice !== null && Number.isFinite(rawPrice) && rawPrice > 0) {
+        // Пересчитываем процент скидки в рубли: цена * (скидка % / 100)
+        const discountFromPercent = rawPrice * (rawDiscountPercent / 100);
+        discount += discountFromPercent;
+      }
+    }
+    
     if (discount > 0) {
       totalDiscounts += discount;
     }
@@ -269,6 +281,7 @@ function parseProductDetailsFromBuffer(
   const priceIdx = findColumn(['цена', 'стоимость', 'price', 'цена, руб', 'цена (руб)']);
   const priceWithDiscountIdx = findColumn(['цена со скидкой', 'цена со скидкой, руб', 'price with discount', 'final price', 'итого', 'итог']);
   const discountIdx = findColumn(['скидка, руб', 'скидка руб', 'скидка (руб)', 'discount']);
+  const discountPercentIdx = findColumn(['скидка, %', 'скидка %', 'скидка (%)', 'скидка процентов', 'discount %', 'discount percent', 'процент скидки']);
   const bonusIdx = findColumn(['использовано бонусов', 'использовано бонус', 'bonus used', 'бонус']);
   const bonusAccruedIdx = findColumn(['начислено бонусов', 'начислено бонус', 'бонусы начислены', 'бонусы начислено', 'начисление бонусов', 'bonus accrued', 'бонусы начислены, руб', 'начисленные бонусы']);
   const costIdx = findColumn(['себестоимость', 'себестоимость позиции', 'себестоимость товара', 'с/с', 'cost']);
@@ -392,11 +405,21 @@ function parseProductDetailsFromBuffer(
     const rawPrice = parseNumber(row[priceIdx]);
     const rawPriceWithDiscount = priceWithDiscountIdx !== undefined ? parseNumber(row[priceWithDiscountIdx]) : null;
     const rawDiscount = discountIdx !== undefined ? parseNumber(row[discountIdx]) : null;
+    const rawDiscountPercent = discountPercentIdx !== undefined ? parseNumber(row[discountPercentIdx]) : null;
     const rawBonusAccrued = bonusAccruedIdx !== undefined ? parseNumber(row[bonusAccruedIdx]) : null;
     const rawCost = costIdx !== undefined ? parseNumber(row[costIdx]) : null;
 
     // Скидка из колонки "скидка, руб"
-    const discount = rawDiscount ?? 0;
+    let discount = rawDiscount ?? 0;
+    
+    // Если есть колонка "скидка, %", пересчитываем процент в рубли и добавляем к скидке
+    if (rawDiscountPercent !== null && Number.isFinite(rawDiscountPercent) && rawDiscountPercent > 0) {
+      if (rawPrice !== null && Number.isFinite(rawPrice) && rawPrice > 0) {
+        // Пересчитываем процент скидки в рубли: цена * (скидка % / 100)
+        const discountFromPercent = rawPrice * (rawDiscountPercent / 100);
+        discount += discountFromPercent;
+      }
+    }
     
     totalDiscounts += discount;
 
