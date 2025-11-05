@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, memo } from 'react';
 import { motion } from 'framer-motion';
 import {
   AlertCircle,
@@ -52,25 +52,30 @@ const formatDate = (dateStr: string) => {
   return date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
 };
 
-export function RevenueMarginIssues({ analytics }: RevenueMarginIssuesProps) {
+function RevenueMarginIssuesComponent({ analytics }: RevenueMarginIssuesProps) {
   const issues = useMemo(() => {
     if (!analytics || !analytics.daily || analytics.daily.length === 0) return [];
 
     const daily = analytics.daily;
     const issues: Issue[] = [];
 
-    // Рассчитываем средние показатели
+    // Рассчитываем средние показатели (оптимизировано - один проход для фильтрации)
+    const daysWithMargin = daily.filter((d) => d.margin != null);
     const avgRevenue = daily.reduce((sum, d) => sum + d.netRevenue, 0) / daily.length;
-    const avgMargin = daily.filter((d) => d.margin != null).reduce((sum, d) => sum + (d.margin ?? 0), 0) / daily.filter((d) => d.margin != null).length;
+    const avgMargin = daysWithMargin.length > 0 
+      ? daysWithMargin.reduce((sum, d) => sum + (d.margin ?? 0), 0) / daysWithMargin.length
+      : 0;
     
     // Рассчитываем стандартное отклонение для выявления аномалий
     const revenueStdDev = Math.sqrt(
       daily.reduce((sum, d) => sum + Math.pow(d.netRevenue - avgRevenue, 2), 0) / daily.length
     );
-    const marginStdDev = Math.sqrt(
-      daily.filter((d) => d.margin != null).reduce((sum, d) => sum + Math.pow((d.margin ?? 0) - avgMargin, 2), 0) / 
-      daily.filter((d) => d.margin != null).length
-    );
+    const marginStdDev = daysWithMargin.length > 0
+      ? Math.sqrt(
+          daysWithMargin.reduce((sum, d) => sum + Math.pow((d.margin ?? 0) - avgMargin, 2), 0) / 
+          daysWithMargin.length
+        )
+      : 0;
 
     // 1. Анализ дней с резким падением выручки (более чем на 30% от среднего)
     const lowRevenueDays = daily
@@ -83,7 +88,6 @@ export function RevenueMarginIssues({ analytics }: RevenueMarginIssuesProps) {
       .sort((a, b) => a.deviation - b.deviation);
 
     if (lowRevenueDays.length > 0) {
-      const totalLoss = lowRevenueDays.reduce((sum, d) => sum + (avgRevenue * 0.7 - d.value), 0);
       const avgProblemRevenue = lowRevenueDays.reduce((sum, d) => sum + d.value, 0) / lowRevenueDays.length;
       
       // Анализ по дням недели для проблемных дней
@@ -110,7 +114,7 @@ export function RevenueMarginIssues({ analytics }: RevenueMarginIssuesProps) {
       }, {} as Record<number, number>);
       const hasPattern = Object.values(dayPattern).some(count => count >= 2);
 
-      // Сравнение с нормальными днями
+      // Сравнение с нормальными днями (90-110% от среднего)
       const normalDays = daily.filter(d => d.netRevenue >= avgRevenue * 0.9 && d.netRevenue <= avgRevenue * 1.1);
       const avgNormalRevenue = normalDays.length > 0 
         ? normalDays.reduce((sum, d) => sum + d.netRevenue, 0) / normalDays.length 
@@ -122,6 +126,26 @@ export function RevenueMarginIssues({ analytics }: RevenueMarginIssuesProps) {
         const dayData = daily.find(day => day.date === d.date);
         return sum + (dayData?.incomeChecks || 0);
       }, 0) / lowRevenueDays.length;
+
+      // Потерянная выручка: разница между нормальной и проблемной выручкой за проблемные дни
+      const totalLoss = lowRevenueDays.reduce((sum, d) => sum + (avgNormalRevenue - d.value), 0);
+
+      // Разница с нормальными днями в среднем за день
+      const dailyDifference = avgNormalRevenue - avgProblemRevenue;
+
+      // Расчет месячного эффекта:
+      // 1. Оцениваем количество проблемных дней в месяц на основе частоты в анализируемом периоде
+      // 2. Умножаем на разницу в выручке за день
+      // 3. Применяем коэффициент восстановления 60% (RECOVERY_RATE):
+      //    Это консервативная оценка, учитывающая, что не все проблемы можно решить на 100%.
+      //    Некоторые факторы (погода, внешние обстоятельства, сезонность) могут остаться вне контроля.
+      //    60% означает, что мы ожидаем восстановить примерно 60% от потенциальной выгоды.
+      const RECOVERY_RATE = 0.6; // 60% - консервативная оценка восстановления
+      const problemDaysPerMonth = (lowRevenueDays.length / daily.length) * 30;
+      const monthlyRecovery = dailyDifference * problemDaysPerMonth * RECOVERY_RATE;
+
+      // Потенциальный максимальный эффект (100% восстановление) для сравнения
+      const maxPotentialRecovery = dailyDifference * problemDaysPerMonth;
 
       issues.push({
         type: 'revenue',
@@ -137,8 +161,8 @@ export function RevenueMarginIssues({ analytics }: RevenueMarginIssuesProps) {
         solution:
           `1) Проверьте календарь событий и внешние факторы в проблемные дни${mostProblematicDay.count > 0 ? `, особенно в ${mostProblematicDay.day}` : ''}. 2) Усильте рекламу перед ожидаемыми слабыми днями. 3) Внедрите специальные акции для привлечения клиентов. 4) Проверьте работу персонала и оборудования в эти дни. 5) Рассмотрите сокращение рабочего времени в непродуктивные дни. ${avgProblemChecks < avgNormalChecks * 0.8 ? '6) Обратите внимание на низкое количество чеков в проблемные дни - возможно, проблема в трафике клиентов.' : ''}`,
         expectedImpact: `Устранение проблем с выручкой может добавить ${formatCurrency(
-          totalLoss * 0.6,
-        )} в месяц (оценка 60% восстановления). ${avgProblemRevenue < avgNormalRevenue * 0.7 ? `Разница с нормальными днями: ${formatCurrency(avgNormalRevenue - avgProblemRevenue)}.` : ''}`,
+          monthlyRecovery,
+        )} в месяц (реалистичная оценка, учитывающая что не все факторы можно контролировать). Максимальный потенциальный эффект при полном устранении: ${formatCurrency(maxPotentialRecovery)}. Разница с нормальными днями в среднем: ${formatCurrency(dailyDifference)}.`,
       });
     }
 
@@ -194,9 +218,9 @@ export function RevenueMarginIssues({ analytics }: RevenueMarginIssuesProps) {
     }
 
     // 4. Анализ дней с низкой маржой (если есть данные COGS)
-    const daysWithMargin = daily.filter((d) => d.margin != null && d.netRevenue > 0);
-    if (daysWithMargin.length > 0) {
-      const lowMarginDays = daysWithMargin
+    const daysWithMarginData = daysWithMargin.filter((d) => d.netRevenue > 0);
+    if (daysWithMarginData.length > 0) {
+      const lowMarginDays = daysWithMarginData
         .filter((d) => (d.margin ?? 0) < avgMargin * 0.8 && (d.margin ?? 0) >= 0)
         .map((d) => ({
           date: d.date,
@@ -216,7 +240,7 @@ export function RevenueMarginIssues({ analytics }: RevenueMarginIssuesProps) {
 
         issues.push({
           type: 'margin',
-          severity: lowMarginDays.length >= daysWithMargin.length * 0.2 ? 'critical' : 'high',
+          severity: lowMarginDays.length >= daysWithMarginData.length * 0.2 ? 'critical' : 'high',
           title: 'Дни с низкой валовой маржой',
           description: `Обнаружено ${lowMarginDays.length} дней с маржой ниже среднего на ${formatPercent(
             Math.abs(
@@ -237,7 +261,7 @@ export function RevenueMarginIssues({ analytics }: RevenueMarginIssuesProps) {
       }
 
       // 5. Анализ дней с отрицательной маржой
-      const negativeMarginDays = daysWithMargin
+      const negativeMarginDays = daysWithMarginData
         .filter((d) => (d.margin ?? 0) < 0)
         .map((d) => ({
           date: d.date,
@@ -315,11 +339,11 @@ export function RevenueMarginIssues({ analytics }: RevenueMarginIssuesProps) {
         description: `В ${daysWithHighReturns.length} днях возвраты превышают 5% от выручки. Общая сумма возвратов: ${formatCurrency(
           avgReturnLoss,
         )}.`,
-        affectedDays: daysWithHighReturns.slice(0, 5).map((d) => ({
-          date: d.date,
-          value: formatPercent(d.value),
-          deviation: d.deviation,
-        })),
+          affectedDays: daysWithHighReturns.slice(0, 5).map((d) => ({
+            date: d.date,
+            value: d.value, // Оставляем как число для консистентности
+            deviation: d.deviation,
+          })),
         rootCause:
           'Высокие возвраты могут быть вызваны: проблемами с качеством продукции, ошибками персонала при приеме заказов, недовольством клиентов сервисом, техническими проблемами с оборудованием.',
         solution:
@@ -581,3 +605,4 @@ export function RevenueMarginIssues({ analytics }: RevenueMarginIssuesProps) {
   );
 }
 
+export const RevenueMarginIssues = memo(RevenueMarginIssuesComponent);

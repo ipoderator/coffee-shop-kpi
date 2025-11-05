@@ -24,6 +24,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type {
   Transaction,
+  ProfitabilityRecord,
   AnalyticsResponse,
   KPIMetrics,
   PeriodData,
@@ -958,6 +959,25 @@ async function generateEnhancedRevenueForecast(
   }
 
   try {
+    // Получаем данные из Z-отчетов для улучшения прогнозирования
+    const { storage } = await import('../storage');
+    let profitabilityRecords: ProfitabilityRecord[] | undefined;
+    try {
+      profitabilityRecords = await storage.listAllProfitabilityRecords();
+      // Фильтруем записи по периоду транзакций
+      if (profitabilityRecords.length > 0 && transactions.length > 0) {
+        const minDate = new Date(Math.min(...transactions.map((t) => new Date(t.date).getTime())));
+        const maxDate = new Date(Math.max(...transactions.map((t) => new Date(t.date).getTime())));
+        profitabilityRecords = profitabilityRecords.filter((r) => {
+          const recordDate = r.reportDate;
+          return recordDate >= minDate && recordDate <= maxDate;
+        });
+      }
+    } catch (error) {
+      console.warn('Не удалось загрузить данные из Z-отчетов для прогнозирования:', error);
+      profitabilityRecords = undefined;
+    }
+
     // Инициализируем внешний сервис данных
     const externalDataService =
       process.env.DISABLE_EXTERNAL_DATA === 'true'
@@ -973,8 +993,12 @@ async function generateEnhancedRevenueForecast(
             twitterApiKey: process.env.TWITTER_API_KEY,
           });
 
-    // Инициализируем улучшенный ML движок с внешними данными
-    const enhancedMLEngine = new EnhancedMLForecastingEngine(transactions, externalDataService);
+    // Инициализируем улучшенный ML движок с внешними данными и данными из Z-отчетов
+    const enhancedMLEngine = new EnhancedMLForecastingEngine(
+      transactions,
+      externalDataService,
+      profitabilityRecords,
+    );
 
     // Получаем последнюю дату для расчета периодов
     const sorted = [...transactions].sort(
@@ -1018,7 +1042,7 @@ async function generateEnhancedRevenueForecast(
       },
       methodology: {
         algorithm:
-          'ML Ensemble (ARIMA + Prophet + LSTM) with Customer & Product Segmentation [BETA]',
+          'ML Ensemble (ARIMA + Prophet + LSTM) with Z-Reports Integration & Customer & Product Segmentation [BETA]',
         dataPoints: transactions.length,
         forecastDays: 7,
         weatherAnalysis: true,
@@ -1026,7 +1050,8 @@ async function generateEnhancedRevenueForecast(
         trendAnalysis: true,
         seasonalAdjustment: true,
         betaVersion: true,
-        betaWarning: 'Функция в разработке - возможны неточности в расчетах',
+        betaWarning:
+          'Функция в разработке - возможны неточности в расчетах. Используются данные из Z-отчетов для улучшения точности.',
       },
     };
   } catch (error) {

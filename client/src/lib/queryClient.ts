@@ -45,11 +45,14 @@ export const queryClient = new QueryClient({
       queryFn: getQueryFn({ on401: 'throw' }),
       refetchInterval: false,
       refetchOnWindowFocus: false,
-      staleTime: Infinity,
-      retry: false,
+      staleTime: 5 * 60 * 1000, // 5 минут - более гибкая настройка для обновления данных
+      gcTime: 10 * 60 * 1000, // 10 минут - время хранения в кеше (ранее cacheTime)
+      retry: 1, // 1 попытка повтора при ошибке для лучшей надежности
+      retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
     },
     mutations: {
-      retry: false,
+      retry: 1,
+      retryDelay: 1000,
     },
   },
 });

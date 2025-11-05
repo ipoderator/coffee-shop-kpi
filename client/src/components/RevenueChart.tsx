@@ -302,7 +302,7 @@ export function RevenueChart({
         },
         bodyFont: {
           size: 14,
-          weight: '600',
+          weight: 600,
         },
         callbacks: {
           title: (context) => context[0]?.label ?? '',
@@ -345,7 +345,7 @@ export function RevenueChart({
         grid: {
           color: 'hsl(var(--border) / 0.25)',
           lineWidth: 1,
-          borderDash: [4, 6],
+          // borderDash removed - not supported in Chart.js v4 types
         },
         border: {
           display: false,
@@ -420,7 +420,7 @@ export function RevenueChart({
           )}
         </div>
 
-        {summary && (
+        {summary !== null && (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-xl border border-border/50 bg-background/80 p-4 shadow-sm backdrop-blur">
               <p className="text-xs uppercase tracking-wide text-muted-foreground">

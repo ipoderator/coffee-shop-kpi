@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, memo } from 'react';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -54,18 +54,18 @@ const formatPercent = (value: number) => {
   return `${(value * 100).toFixed(1)}%`;
 };
 
-export function TopProductsVisualization({ products, viewType }: TopProductsVisualizationProps) {
+// Обрезаем названия продуктов для лучшей читаемости (вынесено за компонент для оптимизации)
+const getShortName = (name: string, maxLength = 30) => {
+  if (name.length <= maxLength) return name;
+  return name.substring(0, maxLength - 3) + '...';
+};
+
+function TopProductsVisualizationComponent({ products, viewType }: TopProductsVisualizationProps) {
   if (products.length === 0) {
     return null;
   }
 
-  // Обрезаем названия продуктов для лучшей читаемости
-  const getShortName = (name: string, maxLength = 30) => {
-    if (name.length <= maxLength) return name;
-    return name.substring(0, maxLength - 3) + '...';
-  };
-
-  const labels = products.map((p) => getShortName(p.itemName));
+  const labels = useMemo(() => products.map((p) => getShortName(p.itemName)), [products]);
 
   // Вычисляем статистику
   const stats = useMemo(() => {
@@ -764,3 +764,5 @@ export function TopProductsVisualization({ products, viewType }: TopProductsVisu
     </div>
   );
 }
+
+export const TopProductsVisualization = memo(TopProductsVisualizationComponent);

@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, memo } from 'react';
 import { motion } from 'framer-motion';
 import {
   AlertCircle,
@@ -10,10 +10,6 @@ import {
   Lightbulb,
   AlertTriangle,
   BarChart3,
-  Calendar,
-  Package,
-  ArrowUpRight,
-  ArrowDownRight,
   Sparkles,
   Activity,
 } from 'lucide-react';
@@ -66,7 +62,7 @@ const formatPercent = (value: number) => {
   return `${(value * 100).toFixed(1)}%`;
 };
 
-export function FinancialRecommendations({
+function FinancialRecommendationsComponent({
   analytics,
   topProductsData,
 }: FinancialRecommendationsProps) {
@@ -943,4 +939,6 @@ export function FinancialRecommendations({
     </motion.div>
   );
 }
+
+export const FinancialRecommendations = memo(FinancialRecommendationsComponent);
 

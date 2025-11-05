@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { Switch, Route, Redirect, useLocation } from 'wouter';
 import { queryClient } from './lib/queryClient';
 import { QueryClientProvider, useQuery } from '@tanstack/react-query';
@@ -39,11 +39,11 @@ function DashboardLayout() {
   const [isUploading, setIsUploading] = useState(false);
 
   // Страницы, которые не требуют uploadId
-  const pagesWithoutUploadId = ['/profitability', '/integrations'];
-  const isPageWithoutUploadId = pagesWithoutUploadId.includes(location);
+  const pagesWithoutUploadId = useMemo(() => ['/profitability', '/integrations'], []);
+  const isPageWithoutUploadId = useMemo(() => pagesWithoutUploadId.includes(location), [location, pagesWithoutUploadId]);
 
-  const fromIso = filter.from?.toISOString();
-  const toIso = filter.to?.toISOString();
+  const fromIso = useMemo(() => filter.from?.toISOString(), [filter.from]);
+  const toIso = useMemo(() => filter.to?.toISOString(), [filter.to]);
 
   const {
     data: analytics,

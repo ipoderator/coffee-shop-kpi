@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback, memo } from 'react';
 import { ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -60,7 +60,7 @@ const getRowHighlightClass = (tags: AnomalyTag[]) => {
   return '';
 };
 
-export function DataTable({ transactions }: DataTableProps) {
+function DataTableComponent({ transactions }: DataTableProps) {
   const [sortField, setSortField] = useState<SortField>('date');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
 
@@ -134,7 +134,7 @@ export function DataTable({ transactions }: DataTableProps) {
     });
   }, [transactions]);
 
-  const handleSort = (field: SortField) => {
+  const handleSort = useCallback((field: SortField) => {
     if (sortField === field) {
       if (sortDirection === 'asc') {
         setSortDirection('desc');
@@ -146,7 +146,7 @@ export function DataTable({ transactions }: DataTableProps) {
       setSortField(field);
       setSortDirection('asc');
     }
-  };
+  }, [sortField, sortDirection]);
 
   const sortedTransactions = useMemo(() => {
     if (!sortDirection) return transactionsWithMetrics;
@@ -348,3 +348,5 @@ export function DataTable({ transactions }: DataTableProps) {
     </Card>
   );
 }
+
+export const DataTable = memo(DataTableComponent);
