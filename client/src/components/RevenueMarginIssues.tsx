@@ -84,6 +84,45 @@ export function RevenueMarginIssues({ analytics }: RevenueMarginIssuesProps) {
 
     if (lowRevenueDays.length > 0) {
       const totalLoss = lowRevenueDays.reduce((sum, d) => sum + (avgRevenue * 0.7 - d.value), 0);
+      const avgProblemRevenue = lowRevenueDays.reduce((sum, d) => sum + d.value, 0) / lowRevenueDays.length;
+      
+      // Анализ по дням недели для проблемных дней
+      const dayOfWeekAnalysis = lowRevenueDays.reduce((acc, d) => {
+        const day = new Date(d.date).getDay();
+        const dayName = ['Воскресенье', 'Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'][day];
+        if (!acc[dayName]) {
+          acc[dayName] = 0;
+        }
+        acc[dayName] += 1;
+        return acc;
+      }, {} as Record<string, number>);
+      const mostProblematicDay = Object.entries(dayOfWeekAnalysis).reduce((max, [day, count]) => 
+        count > max.count ? { day, count } : max, 
+        { day: '', count: 0 }
+      );
+
+      // Анализ паттернов (повторяются ли проблемы)
+      const problemDates = lowRevenueDays.map(d => new Date(d.date));
+      const problemDays = problemDates.map(d => d.getDay());
+      const dayPattern = problemDays.reduce((acc, day) => {
+        acc[day] = (acc[day] || 0) + 1;
+        return acc;
+      }, {} as Record<number, number>);
+      const hasPattern = Object.values(dayPattern).some(count => count >= 2);
+
+      // Сравнение с нормальными днями
+      const normalDays = daily.filter(d => d.netRevenue >= avgRevenue * 0.9 && d.netRevenue <= avgRevenue * 1.1);
+      const avgNormalRevenue = normalDays.length > 0 
+        ? normalDays.reduce((sum, d) => sum + d.netRevenue, 0) / normalDays.length 
+        : avgRevenue;
+      const avgNormalChecks = normalDays.length > 0
+        ? normalDays.reduce((sum, d) => sum + d.incomeChecks, 0) / normalDays.length
+        : 0;
+      const avgProblemChecks = lowRevenueDays.reduce((sum, d) => {
+        const dayData = daily.find(day => day.date === d.date);
+        return sum + (dayData?.incomeChecks || 0);
+      }, 0) / lowRevenueDays.length;
+
       issues.push({
         type: 'revenue',
         severity: lowRevenueDays.length >= daily.length * 0.2 ? 'critical' : 'high',
@@ -93,13 +132,13 @@ export function RevenueMarginIssues({ analytics }: RevenueMarginIssuesProps) {
         )}%. Потерянная выручка: ${formatCurrency(totalLoss)}.`,
         affectedDays: lowRevenueDays.slice(0, 10), // Показываем топ-10 худших дней
         rootCause: `Возможные причины: плохая погода, проблемы с персоналом, технические сбои, недостаточная реклама в эти дни. Средняя выручка в проблемные дни: ${formatCurrency(
-          lowRevenueDays.reduce((sum, d) => sum + d.value, 0) / lowRevenueDays.length,
-        )} против среднего ${formatCurrency(avgRevenue)}.`,
+          avgProblemRevenue,
+        )} против среднего ${formatCurrency(avgRevenue)}. ${mostProblematicDay.count > 0 ? `Проблемы чаще возникают в ${mostProblematicDay.day} (${mostProblematicDay.count} случаев).` : ''} ${hasPattern ? 'Обнаружен паттерн: проблемы повторяются в определенные дни недели.' : ''}`,
         solution:
-          '1) Проверьте календарь событий и внешние факторы в проблемные дни. 2) Усильте рекламу перед ожидаемыми слабыми днями. 3) Внедрите специальные акции для привлечения клиентов. 4) Проверьте работу персонала и оборудования в эти дни. 5) Рассмотрите сокращение рабочего времени в непродуктивные дни.',
+          `1) Проверьте календарь событий и внешние факторы в проблемные дни${mostProblematicDay.count > 0 ? `, особенно в ${mostProblematicDay.day}` : ''}. 2) Усильте рекламу перед ожидаемыми слабыми днями. 3) Внедрите специальные акции для привлечения клиентов. 4) Проверьте работу персонала и оборудования в эти дни. 5) Рассмотрите сокращение рабочего времени в непродуктивные дни. ${avgProblemChecks < avgNormalChecks * 0.8 ? '6) Обратите внимание на низкое количество чеков в проблемные дни - возможно, проблема в трафике клиентов.' : ''}`,
         expectedImpact: `Устранение проблем с выручкой может добавить ${formatCurrency(
           totalLoss * 0.6,
-        )} в месяц (оценка 60% восстановления).`,
+        )} в месяц (оценка 60% восстановления). ${avgProblemRevenue < avgNormalRevenue * 0.7 ? `Разница с нормальными днями: ${formatCurrency(avgNormalRevenue - avgProblemRevenue)}.` : ''}`,
       });
     }
 
@@ -383,24 +422,54 @@ export function RevenueMarginIssues({ analytics }: RevenueMarginIssuesProps) {
                   <p className="text-sm text-muted-foreground">{issue.description}</p>
                   
                   {issue.affectedDays.length > 0 && (
-                    <div className="bg-muted/50 p-3 rounded-md">
-                      <p className="text-xs font-semibold mb-2 flex items-center gap-2">
-                        <Calendar className="w-4 h-4" />
-                        Проблемные дни:
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {issue.affectedDays.map((day, dayIdx) => (
-                          <Badge key={dayIdx} variant="outline" className="text-xs">
-                            {formatDate(day.date)}: {typeof day.value === 'number' && day.value < 1 ? formatPercent(day.value) : formatCurrency(day.value as number)}{' '}
-                            {day.deviation < 0 && (
-                              <ArrowDown className="w-3 h-3 inline ml-1 text-destructive" />
-                            )}
-                            {day.deviation > 0 && (
-                              <ArrowUp className="w-3 h-3 inline ml-1 text-emerald-600" />
-                            )}
-                          </Badge>
-                        ))}
+                    <div className="bg-muted/50 p-3 rounded-md space-y-3">
+                      <div>
+                        <p className="text-xs font-semibold mb-2 flex items-center gap-2">
+                          <Calendar className="w-4 h-4" />
+                          Проблемные дни ({issue.affectedDays.length}):
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {issue.affectedDays.map((day, dayIdx) => {
+                            const dayName = new Date(day.date).toLocaleDateString('ru-RU', { weekday: 'short' });
+                            return (
+                              <Badge key={dayIdx} variant="outline" className="text-xs">
+                                {formatDate(day.date)} ({dayName}): {typeof day.value === 'number' && day.value < 1 ? formatPercent(day.value) : formatCurrency(day.value as number)}{' '}
+                                {day.deviation < 0 && (
+                                  <ArrowDown className="w-3 h-3 inline ml-1 text-destructive" />
+                                )}
+                                {day.deviation > 0 && (
+                                  <ArrowUp className="w-3 h-3 inline ml-1 text-emerald-600" />
+                                )}
+                              </Badge>
+                            );
+                          })}
+                        </div>
                       </div>
+                      
+                      {/* Анализ паттернов по дням недели */}
+                      {issue.type === 'revenue' && issue.affectedDays.length > 0 && (() => {
+                        const dayOfWeekCounts = issue.affectedDays.reduce((acc, d) => {
+                          const day = new Date(d.date).getDay();
+                          const dayName = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'][day];
+                          acc[dayName] = (acc[dayName] || 0) + 1;
+                          return acc;
+                        }, {} as Record<string, number>);
+                        const maxDay = Object.entries(dayOfWeekCounts).reduce((max, [day, count]) => 
+                          count > max.count ? { day, count } : max, 
+                          { day: '', count: 0 }
+                        );
+                        
+                        if (maxDay.count > 1) {
+                          return (
+                            <div className="border-t pt-2 mt-2">
+                              <p className="text-xs font-semibold mb-1 text-muted-foreground">
+                                Паттерн: большинство проблемных дней приходится на {maxDay.day} ({maxDay.count} из {issue.affectedDays.length})
+                              </p>
+                            </div>
+                          );
+                        }
+                        return null;
+                      })()}
                     </div>
                   )}
 
