@@ -1013,23 +1013,8 @@ function parseDetailedSalesFormat({
     }))
     .sort((a, b) => b.totalRevenue - a.totalRevenue); // Сортируем по убыванию выручки
 
-  // Добавляем информацию о кассирах в предупреждения, если есть данные
-  if (cashierStatistics.length > 0) {
-    const topCashier = cashierStatistics[0];
-    const formatCurrency = (value: number) => {
-      return new Intl.NumberFormat('ru-RU', {
-        style: 'currency',
-        currency: 'RUB',
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 0,
-      }).format(value);
-    };
-    const cashierList = cashierStatistics
-      .map((c) => `${c.cashierName}: ${formatCurrency(c.totalRevenue)} (${c.shiftsCount} смен)`)
-      .join('; ');
-    warnings.push(`📊 Статистика по кассирам: ${cashierList}`);
-    warnings.push(`🏆 Наибольшая выручка у кассира "${topCashier.cashierName}": ${formatCurrency(topCashier.totalRevenue)} за ${topCashier.shiftsCount} ${topCashier.shiftsCount === 1 ? 'смену' : topCashier.shiftsCount < 5 ? 'смены' : 'смен'}`);
-  }
+  // Статистика по кассирам сохраняется в cashierStatistics и может быть использована
+  // в других разделах аналитики, но не добавляется в предупреждения
 
   return {
     records,

@@ -216,18 +216,27 @@ function generateExecutiveSummary(analytics: AnalyticsResponse): string {
         }`
       : '';
 
-  const dailyContext =
-    averageDailyRevenue !== undefined
-      ? `Среднесуточная выручка — ${formatCurrency(averageDailyRevenue)}${
-          extremes
-            ? `; максимум ${formatCurrency(extremes.best.revenue)} (${toShortDateLabel(
+  // Используем ML анализ для более точного описания аномалий
+  const mlAnalysis = analytics.mlAnalysis;
+  let dailyContext = '';
+  
+  if (averageDailyRevenue !== undefined) {
+    dailyContext = `Среднесуточная выручка — ${formatCurrency(averageDailyRevenue)}`;
+    
+    // Используем ML объяснения для аномалий, если доступны
+    if (mlAnalysis?.minRevenueAnomaly && mlAnalysis?.maxRevenueAnomaly) {
+      dailyContext += `. ${mlAnalysis.maxRevenueAnomaly.explanation} ${mlAnalysis.minRevenueAnomaly.explanation}`;
+    } else if (extremes) {
+      // Fallback на обычное описание, если ML анализ недоступен
+      dailyContext += `; максимум ${formatCurrency(extremes.best.revenue)} (${toShortDateLabel(
                 extremes.best.period,
               )}), минимум ${formatCurrency(extremes.worst.revenue)} (${toShortDateLabel(
                 extremes.worst.period,
-              )}).`
-            : '.'
-        }`
-      : '';
+      )}).`;
+    } else {
+      dailyContext += '.';
+    }
+  }
 
   const yoyContext =
     revenueGrowthYoY !== undefined
@@ -236,7 +245,32 @@ function generateExecutiveSummary(analytics: AnalyticsResponse): string {
         )}%.`
       : '';
 
-  const recommendationText = `Чтобы увеличить прибыль, рекомендуем ${recommendations.join('; ')}.`;
+  // Добавляем рекомендации от ML модели, если доступны
+  const mlRecommendations: string[] = [];
+  if (mlAnalysis?.minRevenueAnomaly?.recommendations) {
+    mlRecommendations.push(...mlAnalysis.minRevenueAnomaly.recommendations);
+  }
+  if (mlAnalysis?.maxRevenueAnomaly?.recommendations) {
+    mlRecommendations.push(...mlAnalysis.maxRevenueAnomaly.recommendations);
+  }
+  
+  // Объединяем рекомендации
+  const allRecommendations = [...recommendations];
+  if (mlRecommendations.length > 0) {
+    // Добавляем уникальные ML рекомендации
+    mlRecommendations.forEach((rec) => {
+      if (!allRecommendations.some((r) => r.toLowerCase().includes(rec.toLowerCase().substring(0, 20)))) {
+        allRecommendations.push(rec);
+      }
+    });
+  }
+
+  const recommendationText = `Чтобы увеличить прибыль, рекомендуем ${allRecommendations.join('; ')}.`;
+
+  // Добавляем информацию о качестве ML модели, если доступна
+  const mlModelInfo = mlAnalysis?.modelQuality?.overall
+    ? ` Анализ выполнен с использованием ML модели (уверенность: ${(mlAnalysis.confidence * 100).toFixed(0)}%).`
+    : '';
 
   const parts = [
     `Общий оборот кофейни за анализируемый период составил ${formatCurrency(totalRevenue)}${
@@ -254,6 +288,7 @@ function generateExecutiveSummary(analytics: AnalyticsResponse): string {
     `Бизнес ${trendText}.`,
     yoyContext,
     recommendationText,
+    mlModelInfo,
   ].filter(Boolean);
 
   return parts.join(' ');

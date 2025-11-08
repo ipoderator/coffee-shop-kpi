@@ -1,4 +1,4 @@
-import { Transaction, ForecastData, ProfitabilityRecord } from '@shared/schema';
+import { Transaction, ForecastData, ProfitabilityRecord, InsertForecastPrediction } from '@shared/schema';
 import { addDays, format, getDay, startOfDay, endOfDay, subDays, isWeekend } from 'date-fns';
 import {
   ExternalDataService,
@@ -8,6 +8,8 @@ import {
   SocialSentiment,
 } from './externalDataSources';
 import { getEnhancedSalesDataForPeriod, type EnhancedSalesData } from './enhancedDataIntegration';
+import { LLMForecastingEngine } from './llmForecasting';
+import type { IStorage } from '../storage';
 
 const isEnsembleDebugEnabled = process.env.DEBUG_ENSEMBLE === 'true';
 
@@ -78,7 +80,7 @@ interface EnsembleDebugEntry {
 }
 
 // Расширенные интерфейсы для ML моделей
-interface EnhancedTimeSeriesData {
+export interface EnhancedTimeSeriesData {
   date: string;
   revenue: number;
   dayOfWeek: number;
@@ -160,7 +162,7 @@ interface AdvancedModel {
 
 interface ModelEnsemble {
   models: AdvancedModel[];
-  metaModel: (predictions: number[][]) => number[];
+  metaModel: (predictions: number[][], futureData?: Partial<EnhancedTimeSeriesData>[]) => number[];
 }
 
 /**
@@ -174,16 +176,66 @@ export class EnhancedMLForecastingEngine {
   private modelEnsemble: ModelEnsemble;
   private lastAdaptiveDiagnostics: EnsembleDebugEntry[] = [];
   private enhancedSalesData?: EnhancedSalesData[];
+  private dayOfWeekAccuracies: Map<number, number[]> = new Map(); // Точность моделей по дням недели
+  private llmEngine?: LLMForecastingEngine;
+  private currentLLMWeight: number = 0.15; // Текущий вес LLM модели
+  private lastGRUAnalysisDate?: Date; // Дата последнего анализа интеграции GRU
+  private useLLM: boolean; // Флаг использования LLM
+  private storage?: IStorage; // Хранилище для сохранения прогнозов
+  private uploadId?: string; // ID загрузки данных для связи прогнозов с данными
 
   constructor(
     transactions: Transaction[],
     externalDataService?: ExternalDataService,
     profitabilityRecords?: ProfitabilityRecord[],
+    useLLM: boolean = true, // По умолчанию используем LLM, если доступен
+    storage?: IStorage, // Хранилище для сохранения прогнозов
+    uploadId?: string, // ID загрузки данных
   ) {
     this.transactions = transactions;
     this.profitabilityRecords = profitabilityRecords;
     this.externalDataService = externalDataService;
+    this.useLLM = useLLM;
+    this.storage = storage;
+    this.uploadId = uploadId;
+    // LLM движок будет инициализирован лениво при первом использовании
+    this.llmEngine = undefined;
     this.modelEnsemble = this.initializeModelEnsemble();
+  }
+
+  // Ленивая инициализация LLM движка
+  private ensureLLMEngine(): void {
+    if (this.llmEngine !== undefined) {
+      return; // Уже инициализирован или явно отключен
+    }
+
+    // Если LLM отключен через параметр конструктора, не инициализируем
+    if (!this.useLLM) {
+      this.llmEngine = undefined;
+      console.debug('[EnhancedMLForecast] LLM отключен через параметр конструктора (useLLM=false)');
+      return;
+    }
+
+    // LLM всегда включен по умолчанию, если есть API ключ
+    const apiKey = process.env.OPENAI_API_KEY || '';
+    
+    if (!apiKey) {
+      console.warn('[EnhancedMLForecast] ⚠️  LLM не может быть инициализирован: отсутствует OPENAI_API_KEY. LLM будет недоступен.');
+      this.llmEngine = undefined;
+      return;
+    }
+    
+    try {
+      this.llmEngine = new LLMForecastingEngine();
+      if (this.llmEngine.isAvailable()) {
+        console.log('[EnhancedMLForecast] ✅ LLM движок успешно инициализирован');
+      } else {
+        console.warn('[EnhancedMLForecast] ⚠️  LLM движок создан, но недоступен (проверьте конфигурацию)');
+      }
+    } catch (error) {
+      console.error('[EnhancedMLForecast] ❌ Не удалось инициализировать LLM движок:', error);
+      this.llmEngine = undefined;
+    }
   }
 
   // Инициализация ансамбля моделей
@@ -202,8 +254,13 @@ export class EnhancedMLForecastingEngine {
         },
         {
           name: 'LSTM',
-          weight: 0.2,
+          weight: 0.15,
           predict: this.lstmPredict.bind(this),
+        },
+        {
+          name: 'GRU',
+          weight: 0.15,
+          predict: this.gruPredict.bind(this),
         },
         {
           name: 'RandomForest',
@@ -409,6 +466,7 @@ export class EnhancedMLForecastingEngine {
   }
 
   // ARIMA модель с улучшенными параметрами и более стабильными прогнозами
+  // Теперь включает SARIMA для учета недельной сезонности и улучшенный выбор порядка
   private arimaPredict(
     data: EnhancedTimeSeriesData[],
     futureData: Partial<EnhancedTimeSeriesData>[],
@@ -424,28 +482,66 @@ export class EnhancedMLForecastingEngine {
     const revenues = data.map((d) => d.revenue);
     const n = revenues.length;
     
+    // Обработка выбросов перед обучением модели
+    const cleanedRevenues = this.removeOutliers(revenues);
+    
     // Используем медиану для более устойчивой оценки
-    const sorted = [...revenues].sort((a, b) => a - b);
+    const sorted = [...cleanedRevenues].sort((a, b) => a - b);
     const median = sorted.length % 2 === 0
       ? (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2
       : sorted[Math.floor(sorted.length / 2)];
 
-    // Автоматический выбор порядка ARIMA
-    const arimaOrder = this.selectARIMAOrder(revenues);
-    const { ar, ma, diff } = arimaOrder;
+    // Улучшенный автоматический выбор порядка ARIMA через AIC/BIC
+    const arimaOrder = this.selectARIMAOrderImproved(cleanedRevenues);
+    const { ar, ma, diff, sar, sma, seasonalDiff, seasonalPeriod } = arimaOrder;
 
     // Применяем дифференцирование
-    const diffRevenues = this.difference(revenues, diff);
+    const diffRevenues = this.difference(cleanedRevenues, diff);
 
-    // Обучаем модель
-    const arCoeffs = this.fitAR(diffRevenues, ar);
-    const maCoeffs = this.fitMA(diffRevenues, ma);
+    // Применяем сезонное дифференцирование для SARIMA (если есть сезонность)
+    let seasonalDiffRevenues = diffRevenues;
+    if (seasonalPeriod > 0 && seasonalDiff > 0 && diffRevenues.length >= seasonalPeriod * 2) {
+      seasonalDiffRevenues = this.seasonalDifference(diffRevenues, seasonalPeriod, seasonalDiff);
+    }
+
+    // Обучаем модель с улучшенными методами
+    const arCoeffs = this.fitARImproved(seasonalDiffRevenues, ar);
+    const maCoeffs = this.fitMAImproved(seasonalDiffRevenues, ma);
+    
+    // Обучаем сезонные компоненты SARIMA (если есть)
+    let sarCoeffs: number[] = [];
+    let smaCoeffs: number[] = [];
+    if (seasonalPeriod > 0 && sar > 0 && sma > 0 && seasonalDiffRevenues.length >= seasonalPeriod * 2) {
+      sarCoeffs = this.fitARImproved(seasonalDiffRevenues, sar, seasonalPeriod);
+      smaCoeffs = this.fitMAImproved(seasonalDiffRevenues, sma, seasonalPeriod);
+    }
 
     // Прогнозируем с ограничениями
     const predictions: number[] = [];
     for (let i = 0; i < futureData.length; i++) {
-      const prediction = this.predictARIMA(diffRevenues, arCoeffs, maCoeffs, i + 1);
-      const undiffPrediction = this.undifference(revenues, prediction, diff);
+      // Прогноз с учетом сезонности
+      let prediction = this.predictARIMAImproved(
+        seasonalDiffRevenues,
+        arCoeffs,
+        maCoeffs,
+        i + 1,
+        sarCoeffs,
+        smaCoeffs,
+        seasonalPeriod,
+      );
+      
+      // Обратное сезонное дифференцирование
+      if (seasonalPeriod > 0 && seasonalDiff > 0) {
+        prediction = this.undifferenceSeasonal(
+          diffRevenues,
+          prediction,
+          seasonalPeriod,
+          seasonalDiff,
+        );
+      }
+      
+      // Обратное дифференцирование
+      const undiffPrediction = this.undifference(cleanedRevenues, prediction, diff);
       
       // Ограничиваем прогноз: не более 1.5x от медианы и не менее 0.5x
       const clampedPrediction = Math.max(
@@ -459,7 +555,7 @@ export class EnhancedMLForecastingEngine {
     return predictions;
   }
 
-  // Prophet-подобная модель с сезонностью и улучшенной стабильностью
+  // Prophet-подобная модель с улучшенными кастомными сезонностями, changepoint detection и обработкой праздников
   private prophetPredict(
     data: EnhancedTimeSeriesData[],
     futureData: Partial<EnhancedTimeSeriesData>[],
@@ -480,17 +576,20 @@ export class EnhancedMLForecastingEngine {
     const avgRevenue = revenues.reduce((sum, r) => sum + r, 0) / revenues.length;
     const baseRevenue = median * 0.7 + avgRevenue * 0.3; // Используем медиану как основу
 
-    // Анализируем тренд (с ограничениями)
-    const trend = this.calculateTrend(data, data.length);
-    const limitedTrend = Math.max(-median * 0.1, Math.min(median * 0.1, trend)); // Ограничиваем тренд
+    // Обнаружение changepoints (точек изменения тренда)
+    const changepoints = this.detectChangepoints(data);
+    const trendSegments = this.calculateTrendSegments(data, changepoints);
 
-    // Анализируем сезонность
-    const weeklySeasonality = this.calculateWeeklySeasonality(data);
-    const monthlySeasonality = this.calculateMonthlySeasonality(data);
+    // Улучшенные кастомные сезонности с более точными расчетами
+    const weeklySeasonality = this.calculateCustomWeeklySeasonality(data);
+    const monthlySeasonality = this.calculateCustomMonthlySeasonality(data);
     const yearlySeasonality = this.calculateYearlySeasonality(data);
+    
+    // Сезонность по времени месяца (начало/середина/конец)
+    const monthTimeSeasonality = this.calculateMonthTimeSeasonality(data);
 
-    // Анализируем праздничные эффекты
-    const holidayEffects = this.calculateHolidayEffects(data);
+    // Улучшенная обработка праздников с учетом типов
+    const holidayEffectsByType = this.calculateHolidayEffectsByType(data);
 
     // Анализируем погодные эффекты
     const weatherEffects = this.calculateWeatherEffects(data);
@@ -503,32 +602,58 @@ export class EnhancedMLForecastingEngine {
 
       let prediction = baseRevenue;
 
-      // Тренд (с затуханием для дальних прогнозов)
-      const trendDecay = Math.exp(-i * 0.1);
-      prediction += limitedTrend * (i + 1) * trendDecay;
+      // Тренд с учетом changepoints (адаптивный тренд)
+      const currentTrend = this.getTrendAtStep(trendSegments, changepoints, data.length + i);
+      const trendDecay = Math.exp(-i * 0.08); // Немного более медленное затухание
+      prediction += currentTrend * (i + 1) * trendDecay;
 
-      // Сезонность (с ограничениями)
+      // Улучшенная сезонность (кастомные сезонности)
       let seasonalMultiplier = 1;
+      
+      // Недельная сезонность (более точная)
       if (future.dayOfWeek !== undefined) {
-        seasonalMultiplier *= Math.max(0.8, Math.min(1.2, weeklySeasonality[future.dayOfWeek] || 1));
+        const weeklyMult = weeklySeasonality[future.dayOfWeek] || 1;
+        seasonalMultiplier *= Math.max(0.75, Math.min(1.25, weeklyMult));
       }
+      
+      // Месячная сезонность (более точная)
       if (future.month !== undefined) {
-        seasonalMultiplier *= Math.max(0.9, Math.min(1.1, monthlySeasonality[future.month] || 1));
+        const monthlyMult = monthlySeasonality[future.month] || 1;
+        seasonalMultiplier *= Math.max(0.85, Math.min(1.15, monthlyMult));
       }
+      
+      // Сезонность по времени месяца
+      if (future.dayOfMonth !== undefined) {
+        const monthTimeMult = this.getMonthTimeMultiplier(future.dayOfMonth, monthTimeSeasonality);
+        seasonalMultiplier *= monthTimeMult;
+      }
+      
+      // Квартальная сезонность
       if (future.quarter !== undefined) {
         seasonalMultiplier *= Math.max(0.95, Math.min(1.05, yearlySeasonality[future.quarter] || 1));
       }
+      
       prediction *= seasonalMultiplier;
 
-      // Праздники (с ограничениями)
-      if (future.isHoliday && future.holidayImpact !== undefined) {
-        // holidayImpact уже в формате относительного изменения (0.1 = +10%)
-        const holidayMult = Math.max(0.8, Math.min(1.3, 1 + (future.holidayImpact || 0)));
+      // Улучшенная обработка праздников с учетом типов
+      if (future.isHoliday) {
+        let holidayMult = 1.15; // Базовый множитель для праздников
+        
+        if (future.holidayType && holidayEffectsByType.has(future.holidayType)) {
+          // Используем специфичный эффект для типа праздника
+          const typeEffect = holidayEffectsByType.get(future.holidayType) || 0;
+          holidayMult = Math.max(0.9, Math.min(1.4, 1 + typeEffect));
+        } else if (future.holidayImpact !== undefined) {
+          // Используем предоставленный impact
+          holidayMult = Math.max(0.85, Math.min(1.35, 1 + future.holidayImpact));
+        } else {
+          // Используем средний эффект всех праздников
+          const avgHolidayEffect = Array.from(holidayEffectsByType.values())
+            .reduce((sum, effect) => sum + effect, 0) / Math.max(1, holidayEffectsByType.size);
+          holidayMult = Math.max(0.9, Math.min(1.3, 1 + avgHolidayEffect));
+        }
+        
         prediction *= holidayMult;
-      } else if (future.isHoliday) {
-        // Если нет конкретного impact, используем среднее влияние праздников
-        const holidayMult = holidayEffects.get('holiday') || 0;
-        prediction *= Math.max(0.9, Math.min(1.2, 1 + holidayMult));
       }
 
       // Погода (с ограничениями)
@@ -559,22 +684,52 @@ export class EnhancedMLForecastingEngine {
     return predictions;
   }
 
-  // LSTM-подобная модель
+  // Улучшенная LSTM-подобная модель с увеличенной sequence length, dropout и улучшенной нормализацией
   private lstmPredict(
     data: EnhancedTimeSeriesData[],
     futureData: Partial<EnhancedTimeSeriesData>[],
   ): number[] {
     if (data.length < 10) return futureData.map(() => data[data.length - 1]?.revenue || 0);
 
-    const sequenceLength = Math.min(14, data.length);
-    const features = this.extractLSTMFeatures(data);
+    // Увеличиваем sequence length для лучшего учета долгосрочных зависимостей
+    const sequenceLength = Math.min(28, Math.max(14, Math.floor(data.length * 0.3)));
+    const features = this.extractLSTMFeaturesImproved(data);
 
-    // Простая LSTM-подобная модель
-    const lstmWeights = this.trainLSTM(features, sequenceLength);
+    // Улучшенная LSTM модель с dropout
+    const lstmWeights = this.trainLSTMImproved(features, sequenceLength);
 
     const predictions: number[] = [];
     for (let i = 0; i < futureData.length; i++) {
-      const prediction = this.predictLSTM(features, lstmWeights, i + 1);
+      const prediction = this.predictLSTMImproved(features, lstmWeights, i + 1, data);
+      predictions.push(Math.max(0, prediction));
+    }
+
+    return predictions;
+  }
+
+  // GRU (Gated Recurrent Unit) модель - упрощенная версия LSTM
+  private gruPredict(
+    data: EnhancedTimeSeriesData[],
+    futureData: Partial<EnhancedTimeSeriesData>[],
+  ): number[] {
+    if (data.length < 10) return futureData.map(() => data[data.length - 1]?.revenue || 0);
+
+    const sequenceLength = Math.min(14, data.length);
+    const features = this.extractGRUFeatures(data);
+
+    // Вычисляем параметры нормализации для денормализации прогнозов
+    const revenues = data.map((d) => d.revenue).filter((r) => r > 0);
+    const avgRevenue = revenues.length > 0 ? revenues.reduce((sum, r) => sum + r, 0) / revenues.length : 1;
+    const revenueStd = revenues.length > 1
+      ? Math.sqrt(revenues.reduce((sum, r) => sum + Math.pow(r - avgRevenue, 2), 0) / revenues.length)
+      : avgRevenue;
+
+    // Обучение GRU модели
+    const gruWeights = this.trainGRU(features, sequenceLength);
+
+    const predictions: number[] = [];
+    for (let i = 0; i < futureData.length; i++) {
+      const prediction = this.predictGRU(features, gruWeights, i + 1, avgRevenue, revenueStd);
       predictions.push(Math.max(0, prediction));
     }
 
@@ -627,25 +782,92 @@ export class EnhancedMLForecastingEngine {
     return predictions;
   }
 
+  // Вычисляет вес LLM на основе исторической точности
+  private calculateLLMWeight(timeSeriesData: EnhancedTimeSeriesData[]): number {
+    this.ensureLLMEngine();
+    if (!this.llmEngine || !this.llmEngine.isAvailable() || timeSeriesData.length < 14) {
+      return 0.15; // Базовый вес для LLM
+    }
+
+    // Используем кросс-валидацию для оценки точности LLM
+    // Упрощенная версия: оцениваем на основе стабильности данных
+    const revenues = timeSeriesData.map((d) => d.revenue);
+    const avgRevenue = revenues.reduce((sum, r) => sum + r, 0) / revenues.length;
+    
+    // Если данные стабильные (низкая волатильность), LLM может работать лучше
+    const variance = revenues.reduce((sum, r) => sum + Math.pow(r - avgRevenue, 2), 0) / revenues.length;
+    const volatility = Math.sqrt(variance) / avgRevenue;
+    
+    // Высокая волатильность -> меньше вес LLM (0.1), низкая волатильность -> больше вес (0.25)
+    const baseWeight = volatility > 0.3 ? 0.1 : volatility < 0.1 ? 0.25 : 0.15;
+    
+    // Также учитываем количество данных: больше данных -> больше доверия к LLM
+    const dataQuality = Math.min(1, timeSeriesData.length / 90); // Нормализуем до 90 дней
+    const adjustedWeight = baseWeight * (0.7 + dataQuality * 0.3);
+    
+    return Math.max(0.05, Math.min(0.3, adjustedWeight)); // Ограничиваем вес между 5% и 30%
+  }
+
   // Адаптивный ансамбль с динамическими весами
-  private adaptiveEnsemble(predictions: number[][]): number[] {
+  // Улучшенная версия с учетом дней недели и увеличенным влиянием точности
+  private adaptiveEnsemble(
+    predictions: number[][],
+    futureData?: Partial<EnhancedTimeSeriesData>[],
+  ): number[] {
     const result: number[] = [];
     const numPredictions = predictions[0]?.length ?? 0;
     this.lastAdaptiveDiagnostics = [];
 
     // Рассчитываем точность каждой модели на исторических данных
     const modelAccuracy = this.calculateModelAccuracy(predictions);
+    
+    // Рассчитываем точность по дням недели (если еще не рассчитана)
+    if (this.dayOfWeekAccuracies.size === 0 && this.timeSeriesData.length >= 21) {
+      this.dayOfWeekAccuracies = this.calculateDayOfWeekAccuracy();
+    }
 
     for (let i = 0; i < numPredictions; i++) {
       const stepRawWeights: number[] = [];
       let weightedSum = 0;
       let totalWeight = 0;
+      
+      // Определяем день недели для этого прогноза (если доступен)
+      const dayOfWeek = futureData?.[i]?.dayOfWeek;
+      const useDowAccuracy = dayOfWeek !== undefined && this.dayOfWeekAccuracies.size > 0;
 
       for (let j = 0; j < predictions.length; j++) {
-        // Адаптивные веса на основе точности и базовых весов
-        const baseWeight = this.modelEnsemble.models[j].weight;
-        const accuracyWeight = modelAccuracy[j] ?? 0.5;
-        const adaptiveWeight = baseWeight * 0.7 + accuracyWeight * 0.3;
+        // Проверяем, является ли это LLM прогнозом (индекс больше количества моделей)
+        const isLLM = j >= this.modelEnsemble.models.length;
+        
+        let baseWeight: number;
+        let generalAccuracy: number;
+        
+        if (isLLM) {
+          // Для LLM используем вычисленный вес
+          baseWeight = this.currentLLMWeight || 0.15; // Базовый вес 0.15, если не вычислен
+          // Для LLM точность оцениваем как среднее других моделей или 0.6 по умолчанию
+          generalAccuracy = modelAccuracy.length > 0
+            ? modelAccuracy.reduce((sum, acc) => sum + acc, 0) / modelAccuracy.length
+            : 0.6;
+        } else {
+          baseWeight = this.modelEnsemble.models[j].weight;
+          generalAccuracy = modelAccuracy[j] ?? 0.5;
+        }
+        
+        // Получаем точность для конкретного дня недели (если доступна)
+        let daySpecificAccuracy = generalAccuracy;
+        if (useDowAccuracy && dayOfWeek !== undefined && !isLLM) {
+          const modelDowAccuracies = this.dayOfWeekAccuracies.get(j);
+          if (modelDowAccuracies && modelDowAccuracies[dayOfWeek] !== undefined) {
+            // Комбинируем общую точность (40%) с точностью по дню недели (60%)
+            daySpecificAccuracy = 
+              generalAccuracy * 0.4 + 
+              modelDowAccuracies[dayOfWeek] * 0.6;
+          }
+        }
+        
+        // Увеличиваем влияние точности с 30% до 55%: baseWeight * 0.45 + accuracyWeight * 0.55
+        const adaptiveWeight = baseWeight * 0.45 + daySpecificAccuracy * 0.55;
 
         stepRawWeights.push(adaptiveWeight);
         weightedSum += (predictions[j]?.[i] ?? 0) * adaptiveWeight;
@@ -712,6 +934,7 @@ export class EnhancedMLForecastingEngine {
   }
 
   // Кросс-валидация на исторических данных для оценки точности моделей
+  // Улучшенная версия с MAE, RMSE и специализацией по дням недели
   private calculateHistoricalModelAccuracy(): number[] {
     if (this.timeSeriesData.length < 14) {
       return [];
@@ -720,8 +943,8 @@ export class EnhancedMLForecastingEngine {
     const accuracies: number[] = [];
     const dataLength = this.timeSeriesData.length;
     
-    // Используем последние 30% данных для валидации (если есть достаточно данных)
-    const validationStart = Math.max(7, Math.floor(dataLength * 0.7));
+    // Увеличиваем долю данных для валидации с 30% до 45% (0.55 означает 45% данных)
+    const validationStart = Math.max(7, Math.floor(dataLength * 0.55));
     const validationData = this.timeSeriesData.slice(validationStart);
     const trainingData = this.timeSeriesData.slice(0, validationStart);
 
@@ -733,9 +956,10 @@ export class EnhancedMLForecastingEngine {
     for (const model of this.modelEnsemble.models) {
       const predictions: number[] = [];
       const actuals: number[] = [];
+      const dayOfWeekIndices: number[] = []; // Для специализации по дням недели
 
-      // Делаем прогнозы на валидационных данных
-      for (let i = 0; i < Math.min(7, validationData.length); i++) {
+      // Делаем прогнозы на всех валидационных данных (не ограничиваем 7 днями)
+      for (let i = 0; i < validationData.length; i++) {
         const futureDataPoint: Partial<EnhancedTimeSeriesData> = {
           date: validationData[i].date,
           dayOfWeek: validationData[i].dayOfWeek,
@@ -770,31 +994,77 @@ export class EnhancedMLForecastingEngine {
         if (modelPredictions.length > 0 && modelPredictions[0] !== undefined) {
           predictions.push(modelPredictions[0]);
           actuals.push(validationData[i].revenue);
+          dayOfWeekIndices.push(validationData[i].dayOfWeek);
         }
       }
 
-      // Рассчитываем точность (MAPE - Mean Absolute Percentage Error)
+      // Рассчитываем точность с использованием нескольких метрик
       if (predictions.length > 0 && actuals.length > 0) {
-        let totalError = 0;
-        let validPoints = 0;
-
+        // MAPE (Mean Absolute Percentage Error)
+        let mapeSum = 0;
+        let mapeValidPoints = 0;
+        
+        // MAE (Mean Absolute Error)
+        let maeSum = 0;
+        let maeValidPoints = 0;
+        
+        // RMSE (Root Mean Squared Error)
+        let mseSum = 0;
+        let rmseValidPoints = 0;
+        
+        // Средняя выручка для нормализации
+        const avgRevenue = actuals.reduce((sum, val) => sum + val, 0) / actuals.length;
+        
         for (let j = 0; j < predictions.length; j++) {
           const actual = actuals[j];
           const predicted = predictions[j];
           
-          if (actual > 0 && Number.isFinite(predicted) && predicted >= 0) {
-            const error = Math.abs((actual - predicted) / actual);
-            totalError += error;
-            validPoints++;
+          if (Number.isFinite(predicted) && predicted >= 0) {
+            // MAPE (только для дней с ненулевой выручкой)
+            if (actual > 0) {
+              const error = Math.abs((actual - predicted) / actual);
+              mapeSum += error;
+              mapeValidPoints++;
+            }
+            
+            // MAE (всегда)
+            const absError = Math.abs(actual - predicted);
+            maeSum += absError;
+            maeValidPoints++;
+            
+            // RMSE (всегда)
+            const squaredError = Math.pow(actual - predicted, 2);
+            mseSum += squaredError;
+            rmseValidPoints++;
           }
         }
 
-        if (validPoints > 0) {
-          const mape = totalError / validPoints;
-          // Преобразуем MAPE в точность (чем меньше MAPE, тем выше точность)
-          // MAPE 0.1 (10% ошибка) = 0.9 точность
-          const accuracy = Math.max(0, Math.min(1, 1 - mape));
-          accuracies.push(accuracy);
+        if (mapeValidPoints > 0 && maeValidPoints > 0 && rmseValidPoints > 0) {
+          // Рассчитываем метрики
+          const mape = mapeSum / mapeValidPoints;
+          const mae = maeSum / maeValidPoints;
+          const rmse = Math.sqrt(mseSum / rmseValidPoints);
+          
+          // Нормализуем метрики для преобразования в точность (0-1)
+          // MAPE: 0.1 (10% ошибка) = 0.9 точность
+          const mapeAccuracy = Math.max(0, Math.min(1, 1 - mape));
+          
+          // MAE: нормализуем относительно средней выручки
+          // MAE = 5000 при средней выручке 50000 = 10% ошибка = 0.9 точность
+          const normalizedMae = avgRevenue > 0 ? mae / avgRevenue : 0;
+          const maeAccuracy = Math.max(0, Math.min(1, 1 - normalizedMae));
+          
+          // RMSE: нормализуем относительно средней выручки
+          const normalizedRmse = avgRevenue > 0 ? rmse / avgRevenue : 0;
+          const rmseAccuracy = Math.max(0, Math.min(1, 1 - normalizedRmse));
+          
+          // Взвешенная комбинация: MAPE (40%), MAE (30%), RMSE (30%)
+          const combinedAccuracy = 
+            mapeAccuracy * 0.4 + 
+            maeAccuracy * 0.3 + 
+            rmseAccuracy * 0.3;
+          
+          accuracies.push(Math.max(0, Math.min(1, combinedAccuracy)));
         } else {
           accuracies.push(0.5); // Fallback
         }
@@ -806,6 +1076,132 @@ export class EnhancedMLForecastingEngine {
     return accuracies;
   }
 
+  // Расчет точности моделей по дням недели (специализация)
+  private calculateDayOfWeekAccuracy(): Map<number, number[]> {
+    const dowAccuracies = new Map<number, number[]>();
+    
+    if (this.timeSeriesData.length < 21) {
+      // Недостаточно данных для специализации
+      return dowAccuracies;
+    }
+
+    const dataLength = this.timeSeriesData.length;
+    const validationStart = Math.max(7, Math.floor(dataLength * 0.55));
+    const validationData = this.timeSeriesData.slice(validationStart);
+    const trainingData = this.timeSeriesData.slice(0, validationStart);
+
+    if (trainingData.length < 7 || validationData.length < 3) {
+      return dowAccuracies;
+    }
+
+    // Группируем валидационные данные по дням недели
+    const validationByDow = new Map<number, EnhancedTimeSeriesData[]>();
+    for (const data of validationData) {
+      const dow = data.dayOfWeek;
+      if (!validationByDow.has(dow)) {
+        validationByDow.set(dow, []);
+      }
+      validationByDow.get(dow)!.push(data);
+    }
+
+    // Для каждой модели и каждого дня недели
+    for (let modelIdx = 0; modelIdx < this.modelEnsemble.models.length; modelIdx++) {
+      const model = this.modelEnsemble.models[modelIdx];
+      const modelAccuracies: number[] = [];
+
+      for (let dow = 0; dow < 7; dow++) {
+        const dowData = validationByDow.get(dow) || [];
+        
+        if (dowData.length === 0) {
+          modelAccuracies.push(0.5); // Fallback если нет данных для этого дня недели
+          continue;
+        }
+
+        const predictions: number[] = [];
+        const actuals: number[] = [];
+
+        // Делаем прогнозы для всех дней этого дня недели
+        for (let i = 0; i < dowData.length; i++) {
+          const dataPoint = dowData[i];
+          const futureDataPoint: Partial<EnhancedTimeSeriesData> = {
+            date: dataPoint.date,
+            dayOfWeek: dataPoint.dayOfWeek,
+            dayOfMonth: dataPoint.dayOfMonth,
+            month: dataPoint.month,
+            quarter: dataPoint.quarter,
+            year: dataPoint.year,
+            isWeekend: dataPoint.isWeekend,
+            isHoliday: dataPoint.isHoliday,
+            holidayType: dataPoint.holidayType,
+            holidayImpact: dataPoint.holidayImpact,
+            temperature: dataPoint.temperature,
+            precipitation: dataPoint.precipitation,
+            humidity: dataPoint.humidity,
+            windSpeed: dataPoint.windSpeed,
+            cloudCover: dataPoint.cloudCover,
+            uvIndex: dataPoint.uvIndex,
+            visibility: dataPoint.visibility,
+            exchangeRate: dataPoint.exchangeRate,
+            inflation: dataPoint.inflation,
+            consumerConfidence: dataPoint.consumerConfidence,
+            unemploymentRate: dataPoint.unemploymentRate,
+            socialSentiment: dataPoint.socialSentiment,
+            socialVolume: dataPoint.socialVolume,
+          };
+
+          // Находим индекс этого дня в полном валидационном наборе
+          const fullIndex = validationData.findIndex(d => d.date === dataPoint.date);
+          const trainingSlice = trainingData.concat(
+            validationData.slice(0, fullIndex >= 0 ? fullIndex : 0)
+          );
+          
+          const futureData = [futureDataPoint];
+          const modelPredictions = model.predict(trainingSlice, futureData);
+          
+          if (modelPredictions.length > 0 && modelPredictions[0] !== undefined) {
+            predictions.push(modelPredictions[0]);
+            actuals.push(dataPoint.revenue);
+          }
+        }
+
+        // Рассчитываем точность для этого дня недели
+        if (predictions.length > 0 && actuals.length > 0) {
+          let totalError = 0;
+          let validPoints = 0;
+          const avgRevenue = actuals.reduce((sum, val) => sum + val, 0) / actuals.length;
+
+          for (let j = 0; j < predictions.length; j++) {
+            const actual = actuals[j];
+            const predicted = predictions[j];
+            
+            if (actual > 0 && Number.isFinite(predicted) && predicted >= 0) {
+              // Используем комбинацию MAPE и MAE для точности
+              const mape = Math.abs((actual - predicted) / actual);
+              const normalizedMae = avgRevenue > 0 ? Math.abs(actual - predicted) / avgRevenue : 0;
+              const combinedError = mape * 0.6 + normalizedMae * 0.4;
+              totalError += combinedError;
+              validPoints++;
+            }
+          }
+
+          if (validPoints > 0) {
+            const avgError = totalError / validPoints;
+            const accuracy = Math.max(0, Math.min(1, 1 - avgError));
+            modelAccuracies.push(accuracy);
+          } else {
+            modelAccuracies.push(0.5);
+          }
+        } else {
+          modelAccuracies.push(0.5);
+        }
+      }
+
+      dowAccuracies.set(modelIdx, modelAccuracies);
+    }
+
+    return dowAccuracies;
+  }
+
   // Расчет дисперсии
   private calculateVariance(values: number[]): number {
     const mean = values.reduce((sum, val) => sum + val, 0) / values.length;
@@ -813,9 +1209,317 @@ export class EnhancedMLForecastingEngine {
     return variance;
   }
 
+  // Расчет волатильности для конкретного дня недели
+  private calculateDayOfWeekVolatility(dayOfWeek: number, data: EnhancedTimeSeriesData[]): number {
+    if (data.length === 0) return 0;
+    
+    // Фильтруем данные по дню недели
+    const dowData = data.filter((d) => d.dayOfWeek === dayOfWeek);
+    
+    if (dowData.length < 2) return 0;
+    
+    const revenues = dowData.map((d) => d.revenue);
+    const mean = revenues.reduce((sum, val) => sum + val, 0) / revenues.length;
+    
+    if (mean === 0) return 0;
+    
+    // Рассчитываем коэффициент вариации (CV) - стандартное отклонение / среднее
+    const variance = revenues.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / revenues.length;
+    const stdDev = Math.sqrt(variance);
+    const coefficientOfVariation = stdDev / mean;
+    
+    return coefficientOfVariation;
+  }
+
+  // Динамическая калибровка на основе исторических ошибок
+  private applyDynamicCalibration(
+    prediction: number,
+    dayOfWeek: number,
+    data: EnhancedTimeSeriesData[],
+  ): number {
+    if (data.length < 21) {
+      // Недостаточно данных для калибровки
+      return prediction;
+    }
+
+    // Используем кросс-валидацию для оценки систематической ошибки по дню недели
+    const dataLength = data.length;
+    const validationStart = Math.max(7, Math.floor(dataLength * 0.55));
+    const validationData = data.slice(validationStart);
+    const trainingData = data.slice(0, validationStart);
+
+    if (trainingData.length < 7 || validationData.length < 3) {
+      return prediction;
+    }
+
+    // Группируем валидационные данные по дням недели
+    const dowValidationData = validationData.filter((d) => d.dayOfWeek === dayOfWeek);
+    
+    if (dowValidationData.length < 2) {
+      // Недостаточно данных для этого дня недели
+      return prediction;
+    }
+
+    // Рассчитываем среднюю ошибку прогноза для этого дня недели
+    // Используем простую модель: среднее значение для этого дня недели
+    const historicalDowRevenues = dowValidationData.map((d) => d.revenue);
+    const avgHistoricalDowRevenue = 
+      historicalDowRevenues.reduce((sum, val) => sum + val, 0) / historicalDowRevenues.length;
+    
+    // Также используем данные из trainingData для этого дня недели
+    const trainingDowData = trainingData.filter((d) => d.dayOfWeek === dayOfWeek);
+    const trainingDowRevenues = trainingDowData.map((d) => d.revenue);
+    const avgTrainingDowRevenue = trainingDowRevenues.length > 0
+      ? trainingDowRevenues.reduce((sum, val) => sum + val, 0) / trainingDowRevenues.length
+      : avgHistoricalDowRevenue;
+    
+    // Комбинируем средние значения из training и validation
+    const combinedAvgDowRevenue = 
+      (avgTrainingDowRevenue * 0.6 + avgHistoricalDowRevenue * 0.4);
+    
+    // Рассчитываем систематическую ошибку
+    // Если исторически модель переоценивала/недооценивала для этого дня недели
+    const recentDowData = data
+      .slice(-Math.min(30, data.length))
+      .filter((d) => d.dayOfWeek === dayOfWeek);
+    
+    if (recentDowData.length >= 3) {
+      const recentAvg = recentDowData.reduce((sum, d) => sum + d.revenue, 0) / recentDowData.length;
+      
+      // Если прогноз сильно отличается от исторического среднего для этого дня недели
+      // применяем мягкую калибровку
+      const historicalAvg = combinedAvgDowRevenue;
+      const predictionBias = (prediction - historicalAvg) / (historicalAvg + 1);
+      
+      // Снижен порог калибровки с 15% до 5-7% для более точной калибровки
+      const calibrationThreshold = 0.06; // 6% порог
+      
+      if (Math.abs(predictionBias) > calibrationThreshold) {
+        // Адаптивная сила калибровки: больше отклонение = больше калибровка
+        // При отклонении 6-10%: 30% калибровка
+        // При отклонении 10-20%: 40% калибровка
+        // При отклонении >20%: 50% калибровка
+        const absBias = Math.abs(predictionBias);
+        let calibrationFactor = 0.3; // Базовая калибровка
+        
+        if (absBias > 0.2) {
+          calibrationFactor = 0.5; // Сильная калибровка при больших отклонениях
+        } else if (absBias > 0.1) {
+          calibrationFactor = 0.4; // Средняя калибровка
+        }
+        
+        // Применяем калибровку: смещаем прогноз в сторону исторического среднего
+        const calibrated = prediction * (1 - calibrationFactor) + historicalAvg * calibrationFactor;
+        
+        // Учитываем также недавний тренд
+        const recentTrend = recentAvg / historicalAvg;
+        const finalCalibrated = calibrated * (0.7 + recentTrend * 0.3);
+        
+        return Math.max(0, finalCalibrated);
+      }
+    }
+
+    return prediction;
+  }
+
+  // Проверка доступности LLM движка
+  public isLLMAvailable(): boolean {
+    this.ensureLLMEngine();
+    return this.llmEngine?.isAvailable() ?? false;
+  }
+
+  // Получение метрик качества моделей для отображения
+  public async getModelQualityMetrics(timeSeriesData?: EnhancedTimeSeriesData[]): Promise<Record<string, number>> {
+    const data = timeSeriesData || this.timeSeriesData;
+    
+    if (data.length < 7) {
+      // Дефолтные значения при недостатке данных
+      return {
+        arima: 0.5,
+        prophet: 0.5,
+        lstm: 0.5,
+        gru: 0.5,
+        llm: 0,
+      };
+    }
+
+    // Получаем теоретическую оценку производительности (30% веса)
+    const performanceRaw = this.evaluateModelPerformance(data);
+    const modelPerformance = performanceRaw.map((perf) =>
+      Number.isFinite(perf) && perf > 0 ? perf : 1e-6,
+    );
+
+    // Нормализуем к 0-1 диапазону
+    const maxPerformance = Math.max(...modelPerformance, 1);
+    const normalizedPerformance = modelPerformance.map((perf) => Math.min(1, perf / maxPerformance));
+
+    // Получаем реальные метрики точности из БД (70% веса)
+    const realMetrics: Record<string, number> = {};
+    try {
+      const { getModelMetrics } = await import('./forecastFeedback');
+      
+      // Маппинг названий моделей
+      const modelNameMap: Record<string, string> = {
+        'arima': 'ARIMA',
+        'prophet': 'Prophet',
+        'lstm': 'LSTM',
+        'gru': 'GRU',
+        'randomforest': 'RandomForest',
+        'xgboost': 'XGBoost',
+        'gradientboosting': 'GradientBoosting',
+      };
+
+      for (const [key, modelName] of Object.entries(modelNameMap)) {
+        const metrics = await getModelMetrics(modelName);
+        
+        if (metrics.length > 0) {
+          // Находим общую метрику (без dayOfWeek и horizon)
+          const overallMetric = metrics.find((m) => m.dayOfWeek === null && m.horizon === null);
+          
+          if (overallMetric && overallMetric.sampleSize > 0) {
+            // Преобразуем MAPE в точность: 1 - MAPE (но ограничиваем разумными пределами)
+            // MAPE 0.1 (10% ошибка) = точность 0.9 (90%)
+            // MAPE 0.3 (30% ошибка) = точность 0.7 (70%)
+            // MAPE 0.5 (50% ошибка) = точность 0.5 (50%)
+            const mape = overallMetric.mape;
+            const accuracy = Math.max(0, Math.min(1, 1 - mape));
+            
+            // Учитываем размер выборки: больше данных = больше доверия
+            const sampleSizeWeight = Math.min(1, overallMetric.sampleSize / 20); // Нормализуем к 20+ выборкам
+            const weightedAccuracy = accuracy * sampleSizeWeight + 0.5 * (1 - sampleSizeWeight);
+            
+            realMetrics[key] = weightedAccuracy;
+          } else {
+            // Если нет общей метрики, используем среднее всех доступных метрик
+            const avgMape = metrics.reduce((sum, m) => sum + (m.mape || 0), 0) / metrics.length;
+            if (avgMape > 0) {
+              const accuracy = Math.max(0, Math.min(1, 1 - avgMape));
+              realMetrics[key] = accuracy;
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to get real metrics from forecastFeedback:', error);
+    }
+
+    // Комбинируем теоретическую оценку (30%) с реальными метриками (70%)
+    const metrics: Record<string, number> = {};
+    this.modelEnsemble.models.forEach((model, index) => {
+      const theoreticalQuality = normalizedPerformance[index] ?? 0.5;
+      const modelKey = model.name.toLowerCase();
+      const realQuality = realMetrics[modelKey] ?? undefined;
+      
+      // Если есть реальные метрики, комбинируем их с теоретической оценкой
+      if (realQuality !== undefined) {
+        metrics[modelKey] = realQuality * 0.7 + theoreticalQuality * 0.3;
+      } else {
+        // Если нет реальных метрик, используем только теоретическую оценку
+        metrics[modelKey] = theoreticalQuality;
+      }
+    });
+
+    // Добавляем метрики LLM если доступны
+    this.ensureLLMEngine();
+    if (this.llmEngine && this.llmEngine.isAvailable()) {
+      try {
+        // Пытаемся получить реальные метрики для LLM
+        const { getModelMetrics } = await import('./forecastFeedback');
+        const llmRealMetrics = await getModelMetrics('LLM');
+        
+        let llmRealQuality = undefined;
+        if (llmRealMetrics.length > 0) {
+          const overallMetric = llmRealMetrics.find((m) => m.dayOfWeek === null && m.horizon === null);
+          if (overallMetric && overallMetric.sampleSize > 0) {
+            const mape = overallMetric.mape;
+            const accuracy = Math.max(0, Math.min(1, 1 - mape));
+            const sampleSizeWeight = Math.min(1, overallMetric.sampleSize / 20);
+            llmRealQuality = accuracy * sampleSizeWeight + 0.5 * (1 - sampleSizeWeight);
+          }
+        }
+        
+        const llmMetrics = this.llmEngine.getMetrics();
+        // Рассчитываем теоретическое качество на основе успешных запросов
+        const successRate = llmMetrics.totalRequests > 0 
+          ? llmMetrics.successfulRequests / llmMetrics.totalRequests 
+          : 0;
+        const avgResponseTime = llmMetrics.averageResponseTime || 0;
+        const responseTimeScore = avgResponseTime > 0 && avgResponseTime < 5000 
+          ? Math.max(0, 1 - (avgResponseTime / 5000)) 
+          : 0.5;
+        const theoreticalLLMQuality = Math.min(1, (successRate * 0.7 + responseTimeScore * 0.3));
+        
+        // Комбинируем реальные метрики (70%) с теоретическими (30%)
+        if (llmRealQuality !== undefined) {
+          metrics.llm = llmRealQuality * 0.7 + theoreticalLLMQuality * 0.3;
+        } else {
+          metrics.llm = theoreticalLLMQuality;
+        }
+      } catch (error) {
+        console.warn('Failed to get LLM metrics:', error);
+        metrics.llm = 0;
+      }
+    } else {
+      metrics.llm = 0;
+    }
+
+    return metrics;
+  }
+
+  // Получение статуса и метрик LLM
+  public getLLMStatus(): {
+    enabled: boolean;
+    available: boolean;
+    metrics?: {
+      totalRequests: number;
+      successfulRequests: number;
+      failedRequests: number;
+      cacheHits: number;
+      averageResponseTime: number;
+      successRate: number;
+    };
+  } {
+    this.ensureLLMEngine();
+    
+    if (!this.llmEngine) {
+      return { enabled: false, available: false };
+    }
+
+    const isAvailable = this.llmEngine.isAvailable();
+    if (!isAvailable) {
+      return { enabled: true, available: false };
+    }
+
+    try {
+      const metrics = this.llmEngine.getMetrics();
+      const successRate = metrics.totalRequests > 0 
+        ? metrics.successfulRequests / metrics.totalRequests 
+        : 0;
+
+      return {
+        enabled: true,
+        available: true,
+        metrics: {
+          totalRequests: metrics.totalRequests,
+          successfulRequests: metrics.successfulRequests,
+          failedRequests: metrics.failedRequests,
+          cacheHits: metrics.cacheHits,
+          averageResponseTime: metrics.averageResponseTime,
+          successRate,
+        },
+      };
+    } catch (error) {
+      console.warn('Failed to get LLM metrics:', error);
+      return { enabled: true, available: false };
+    }
+  }
+
   // Основной метод прогнозирования
   public async generateEnhancedForecast(days: number = 7): Promise<ForecastData[]> {
     const timeSeriesData = await this.prepareEnhancedTimeSeriesData();
+    
+    // Сохраняем данные для последующего использования в getModelQualityMetrics
+    this.timeSeriesData = timeSeriesData;
 
     if (timeSeriesData.length < 7) {
       return this.generateFallbackForecast(days);
@@ -907,10 +1611,120 @@ export class EnhancedMLForecastingEngine {
       });
     }
 
-    // Получаем прогнозы от всех моделей
-    const rawModelPredictions = this.modelEnsemble.models.map((model) =>
-      model.predict(timeSeriesData, futureData),
-    );
+    // Получаем прогнозы от всех моделей параллельно с таймаутами и обработкой ошибок
+    const modelTimeoutMs = parseInt(process.env.MODEL_TIMEOUT_MS || '30000', 10); // 30 секунд по умолчанию
+    
+    const modelPromises = this.modelEnsemble.models.map(async (model, index) => {
+      const modelName = model.name;
+      
+      // Создаем промис с таймаутом
+      const timeoutPromise = new Promise<number[]>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error(`Model ${modelName} timeout after ${modelTimeoutMs}ms`));
+        }, modelTimeoutMs);
+      });
+      
+      // Обертываем вызов модели в промис
+      const modelPromise = new Promise<number[]>((resolve, reject) => {
+        try {
+          // Выполняем модель в следующем тике event loop для неблокирующего выполнения
+          setImmediate(() => {
+            try {
+              const predictions = model.predict(timeSeriesData, futureData);
+              resolve(predictions);
+            } catch (error) {
+              reject(error);
+            }
+          });
+        } catch (error) {
+          reject(error);
+        }
+      });
+      
+      // Соревнование между моделью и таймаутом
+      try {
+        const predictions = await Promise.race([modelPromise, timeoutPromise]);
+        return { modelIndex: index, modelName, predictions, success: true };
+      } catch (error) {
+        console.warn(`[EnhancedMLForecast] Model ${modelName} failed or timed out:`, error);
+        // Fallback: используем простое среднее для этой модели
+        const avgRevenue = timeSeriesData.length > 0
+          ? timeSeriesData.reduce((sum, d) => sum + d.revenue, 0) / timeSeriesData.length
+          : 0;
+        const fallbackPredictions = futureData.map(() => avgRevenue);
+        return { modelIndex: index, modelName, predictions: fallbackPredictions, success: false };
+      }
+    });
+    
+    // Ждем выполнения всех моделей параллельно
+    const modelResults = await Promise.all(modelPromises);
+    
+    // Сортируем результаты по индексу модели и извлекаем прогнозы
+    const rawModelPredictions = modelResults
+      .sort((a, b) => a.modelIndex - b.modelIndex)
+      .map(result => result.predictions);
+    
+    // Логируем результаты
+    const successfulModels = modelResults.filter(r => r.success).map(r => r.modelName);
+    const failedModels = modelResults.filter(r => !r.success).map(r => r.modelName);
+    if (failedModels.length > 0) {
+      console.log(`[EnhancedMLForecast] Successful models: ${successfulModels.join(', ')}`);
+      console.log(`[EnhancedMLForecast] Failed/fallback models: ${failedModels.join(', ')}`);
+    }
+
+    // Анализ интеграции GRU (только при первом запуске или при изменении данных)
+    if (this.shouldAnalyzeGRUIntegration()) {
+      this.analyzeGRUIntegration(timeSeriesData, rawModelPredictions, futureData);
+    }
+
+    // Получаем прогноз от LLM (если доступен) и добавляем в ансамбль
+    let llmPredictions: number[] = [];
+    this.ensureLLMEngine();
+    if (this.llmEngine && this.llmEngine.isAvailable()) {
+      try {
+        const llmStartTime = Date.now();
+        console.log(`[EnhancedMLForecast] 🤖 Запуск LLM прогнозирования для ${futureData.length} дней...`);
+        llmPredictions = await this.llmPredict(timeSeriesData, futureData);
+        const llmDuration = Date.now() - llmStartTime;
+        
+        // Вычисляем вес LLM на основе исторической точности (если доступна)
+        // Используем базовый вес 0.15 для LLM, который будет адаптивно корректироваться
+        this.currentLLMWeight = this.calculateLLMWeight(timeSeriesData);
+        
+        // Логирование использования LLM
+        const llmMetrics = this.llmEngine.getMetrics();
+        const successRate = llmMetrics.totalRequests > 0 
+          ? (llmMetrics.successfulRequests / llmMetrics.totalRequests * 100).toFixed(1)
+          : '0';
+        
+        console.log(
+          `[EnhancedMLForecast] ✅ LLM прогноз завершен: ${llmPredictions.length} дней, ` +
+          `вес: ${this.currentLLMWeight.toFixed(3)}, ` +
+          `время: ${llmDuration}ms, ` +
+          `запросов: ${llmMetrics.totalRequests}, ` +
+          `успешно: ${llmMetrics.successfulRequests} (${successRate}%), ` +
+          `ошибок: ${llmMetrics.failedRequests}, ` +
+          `кеш попаданий: ${llmMetrics.cacheHits}`,
+        );
+        
+        // Добавляем LLM прогнозы в ансамбль
+        rawModelPredictions.push(llmPredictions);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error(`[EnhancedMLForecast] ❌ Ошибка LLM прогнозирования: ${errorMessage}`);
+        console.error(`[EnhancedMLForecast] Продолжаем без LLM прогнозов...`);
+        this.currentLLMWeight = 0; // Отключаем LLM вес при ошибке
+      }
+    } else {
+      this.currentLLMWeight = 0;
+      if (!this.useLLM) {
+        console.debug('[EnhancedMLForecast] LLM отключен через параметр конструктора');
+      } else if (!process.env.OPENAI_API_KEY) {
+        console.warn('[EnhancedMLForecast] ⚠️  LLM не может быть использован: отсутствует OPENAI_API_KEY');
+      } else {
+        console.debug('[EnhancedMLForecast] LLM движок недоступен по неизвестной причине');
+      }
+    }
 
     const revenueHistory = timeSeriesData.map((d) => d.revenue);
     
@@ -947,8 +1761,8 @@ export class EnhancedMLForecastingEngine {
       series.map((prediction) => this.convertToAbsolutePrediction(prediction, baseRevenue)),
     );
 
-    // Объединяем прогнозы
-    const ensemblePredictions = this.modelEnsemble.metaModel(modelPredictions);
+    // Объединяем прогнозы с учетом дней недели
+    const ensemblePredictions = this.modelEnsemble.metaModel(modelPredictions, futureData);
     const { clampLimit, clampMin, median } = calculateHistoricalClamp(revenueHistory, baseRevenue);
     const seasonalityStats = this.computeSeasonalityStats(timeSeriesData);
     
@@ -1076,19 +1890,45 @@ export class EnhancedMLForecastingEngine {
       const clampedPrediction = Math.min(finalBlended, clampLimit);
       const safePrediction = Math.max(clampMin, clampedPrediction);
       
-      // Дополнительная проверка: если прогноз слишком отличается от предыдущих дней, сглаживаем
+      // Улучшенная проверка сглаживания с учетом дня недели
       if (i > 0 && finalPredictions.length > 0) {
         const prevPrediction = finalPredictions[finalPredictions.length - 1];
         const change = Math.abs(safePrediction - prevPrediction) / prevPrediction;
-        // Если изменение больше 50%, применяем сглаживание
-        if (change > 0.5) {
-          const smoothed = prevPrediction * 0.7 + safePrediction * 0.3;
+        
+        // Определяем порог сглаживания на основе дня недели и волатильности
+        // Понедельники (1) и дни после выходных могут иметь большую волатильность
+        const isHighVolatilityDay = dayOfWeek === 1 || dayOfWeek === 0; // Понедельник или воскресенье
+        const isTransitionDay = dayOfWeek === 1 || dayOfWeek === 6; // Понедельник или суббота
+        
+        // Снижаем базовый порог с 50% до 32%
+        // Для дней с высокой волатильностью увеличиваем порог до 45%
+        const baseSmoothingThreshold = 0.32;
+        const volatilityBonus = isHighVolatilityDay ? 0.13 : 0;
+        const smoothingThreshold = baseSmoothingThreshold + volatilityBonus;
+        
+        // Также учитываем историческую волатильность для этого дня недели
+        const historicalVolatility = this.calculateDayOfWeekVolatility(dayOfWeek, timeSeriesData);
+        const volatilityAdjustment = Math.min(0.08, historicalVolatility * 0.1);
+        const finalThreshold = smoothingThreshold + volatilityAdjustment;
+        
+        // Если изменение превышает порог, применяем умное сглаживание
+        if (change > finalThreshold) {
+          // Для дней с высокой волатильностью применяем более мягкое сглаживание
+          const smoothingStrength = isHighVolatilityDay ? 0.6 : 0.75; // Меньше сглаживания для волатильных дней
+          const smoothed = prevPrediction * smoothingStrength + safePrediction * (1 - smoothingStrength);
           finalPredictions.push(Math.max(clampMin, Math.min(clampLimit, smoothed)));
           continue;
         }
       }
 
-      finalPredictions.push(safePrediction);
+      // Применяем динамическую калибровку на основе исторических ошибок
+      const calibratedPrediction = this.applyDynamicCalibration(
+        safePrediction,
+        dayOfWeek,
+        timeSeriesData,
+      );
+
+      finalPredictions.push(calibratedPrediction);
 
       // Расчет уверенности
       const confidence = this.calculateEnhancedConfidence(timeSeriesData, modelPredictions, i);
@@ -1144,9 +1984,132 @@ export class EnhancedMLForecastingEngine {
         socialSentimentImpact: factors.socialSentiment,
         demographicImpact: factors.customerSegment,
       });
+      
+      finalPredictions.push(safePrediction);
+    }
+
+    // Сохраняем прогнозы в БД для обратной связи
+    if (this.storage && this.uploadId) {
+      await this.saveForecastsToStorage(
+        forecasts,
+        modelPredictions,
+        llmPredictions,
+        finalPredictions,
+        lastDate,
+      );
     }
 
     return forecasts;
+  }
+
+  /**
+   * Сохраняет прогнозы всех моделей в хранилище для последующего анализа отклонений
+   */
+  private async saveForecastsToStorage(
+    ensembleForecasts: ForecastData[],
+    modelPredictions: number[][],
+    llmPredictions: number[],
+    finalPredictions: number[],
+    lastDate: Date,
+  ): Promise<void> {
+    if (!this.storage || !this.uploadId) {
+      return;
+    }
+
+    try {
+      const savePromises: Promise<any>[] = [];
+
+      // Сохраняем прогнозы от каждой модели отдельно
+      for (let modelIdx = 0; modelIdx < this.modelEnsemble.models.length; modelIdx++) {
+        const model = this.modelEnsemble.models[modelIdx];
+        const predictions = modelPredictions[modelIdx] || [];
+
+        for (let i = 0; i < ensembleForecasts.length; i++) {
+          const forecast = ensembleForecasts[i];
+          const forecastDate = new Date(forecast.date);
+          const dayOfWeek = getDay(forecastDate);
+          const horizon = i + 1;
+
+          const prediction: InsertForecastPrediction = {
+            uploadId: this.uploadId,
+            modelName: model.name,
+            forecastDate: forecastDate,
+            actualDate: forecastDate,
+            predictedRevenue: predictions[i] || 0,
+            actualRevenue: null,
+            dayOfWeek,
+            horizon,
+            mape: null,
+            mae: null,
+            rmse: null,
+            factors: forecast.factors || null,
+          };
+
+          savePromises.push(this.storage.createForecastPrediction(prediction));
+        }
+      }
+
+      // Сохраняем LLM прогнозы (если есть)
+      if (llmPredictions.length > 0) {
+        for (let i = 0; i < ensembleForecasts.length; i++) {
+          const forecast = ensembleForecasts[i];
+          const forecastDate = new Date(forecast.date);
+          const dayOfWeek = getDay(forecastDate);
+          const horizon = i + 1;
+
+          const prediction: InsertForecastPrediction = {
+            uploadId: this.uploadId,
+            modelName: 'LLM',
+            forecastDate: forecastDate,
+            actualDate: forecastDate,
+            predictedRevenue: llmPredictions[i] || 0,
+            actualRevenue: null,
+            dayOfWeek,
+            horizon,
+            mape: null,
+            mae: null,
+            rmse: null,
+            factors: forecast.factors || null,
+          };
+
+          savePromises.push(this.storage.createForecastPrediction(prediction));
+        }
+      }
+
+      // Сохраняем финальный ансамбль-прогноз
+      for (let i = 0; i < ensembleForecasts.length; i++) {
+        const forecast = ensembleForecasts[i];
+        const forecastDate = new Date(forecast.date);
+        const dayOfWeek = getDay(forecastDate);
+        const horizon = i + 1;
+
+        const prediction: InsertForecastPrediction = {
+          uploadId: this.uploadId,
+          modelName: 'Ensemble',
+          forecastDate: forecastDate,
+          actualDate: forecastDate,
+          predictedRevenue: finalPredictions[i] || forecast.predictedRevenue,
+          actualRevenue: null,
+          dayOfWeek,
+          horizon,
+          mape: null,
+          mae: null,
+          rmse: null,
+          factors: forecast.factors || null,
+        };
+
+        savePromises.push(this.storage.createForecastPrediction(prediction));
+      }
+
+      // Выполняем сохранение параллельно
+      await Promise.all(savePromises);
+      console.log(
+        `[EnhancedMLForecast] Сохранено ${savePromises.length} прогнозов для uploadId: ${this.uploadId}`,
+      );
+    } catch (error) {
+      console.error('[EnhancedMLForecast] Ошибка при сохранении прогнозов:', error);
+      // Не прерываем выполнение, если сохранение не удалось
+    }
   }
 
   // Вспомогательные методы
@@ -1233,6 +2196,358 @@ export class EnhancedMLForecastingEngine {
     return { ar: 1, ma: 1, diff: 1 };
   }
 
+  // Улучшенный выбор порядка ARIMA через AIC/BIC критерии
+  private selectARIMAOrderImproved(revenues: number[]): {
+    ar: number;
+    ma: number;
+    diff: number;
+    sar: number;
+    sma: number;
+    seasonalDiff: number;
+    seasonalPeriod: number;
+  } {
+    const n = revenues.length;
+    if (n < 14) {
+      return { ar: 1, ma: 1, diff: 1, sar: 0, sma: 0, seasonalDiff: 0, seasonalPeriod: 0 };
+    }
+
+    // Определяем сезонный период (7 дней для недельной сезонности)
+    const seasonalPeriod = n >= 21 ? 7 : 0; // Минимум 3 недели данных для сезонности
+
+    // Тестируем различные порядки ARIMA
+    const maxOrder = Math.min(3, Math.floor(n / 10)); // Максимальный порядок зависит от размера данных
+    let bestAIC = Infinity;
+    let bestOrder = { ar: 1, ma: 1, diff: 1, sar: 0, sma: 0, seasonalDiff: 0, seasonalPeriod: 0 };
+
+    // Тестируем порядки дифференцирования
+    for (let diff = 0; diff <= Math.min(2, maxOrder); diff++) {
+      if (n < diff + 10) continue;
+      
+      const diffRevenues = this.difference(revenues, diff);
+      if (diffRevenues.length < 7) continue;
+
+      // Тестируем AR и MA порядки
+      for (let ar = 0; ar <= maxOrder; ar++) {
+        for (let ma = 0; ma <= maxOrder; ma++) {
+          if (ar === 0 && ma === 0) continue; // Хотя бы один должен быть > 0
+          
+          try {
+            const arCoeffs = this.fitARImproved(diffRevenues, ar);
+            const maCoeffs = this.fitMAImproved(diffRevenues, ma);
+            
+            // Рассчитываем AIC
+            const aic = this.calculateAIC(diffRevenues, arCoeffs, maCoeffs, ar, ma, diff);
+            
+            if (aic < bestAIC && Number.isFinite(aic)) {
+              bestAIC = aic;
+              bestOrder = { ar, ma, diff, sar: 0, sma: 0, seasonalDiff: 0, seasonalPeriod: 0 };
+            }
+          } catch (error) {
+            // Пропускаем невалидные комбинации
+            continue;
+          }
+        }
+      }
+
+      // Тестируем SARIMA (если есть сезонность)
+      if (seasonalPeriod > 0 && diffRevenues.length >= seasonalPeriod * 2) {
+        for (let sar = 0; sar <= Math.min(1, maxOrder); sar++) {
+          for (let sma = 0; sma <= Math.min(1, maxOrder); sma++) {
+            if (sar === 0 && sma === 0) continue;
+            
+            try {
+              const seasonalDiffRevenues = this.seasonalDifference(diffRevenues, seasonalPeriod, 1);
+              if (seasonalDiffRevenues.length < 7) continue;
+              
+              const arCoeffs = this.fitARImproved(seasonalDiffRevenues, bestOrder.ar);
+              const maCoeffs = this.fitMAImproved(seasonalDiffRevenues, bestOrder.ma);
+              const sarCoeffs = sar > 0 ? this.fitARImproved(seasonalDiffRevenues, sar, seasonalPeriod) : [];
+              const smaCoeffs = sma > 0 ? this.fitMAImproved(seasonalDiffRevenues, sma, seasonalPeriod) : [];
+              
+              // Рассчитываем AIC для SARIMA
+              const aic = this.calculateAIC(
+                seasonalDiffRevenues,
+                arCoeffs,
+                maCoeffs,
+                bestOrder.ar,
+                bestOrder.ma,
+                bestOrder.diff,
+                sarCoeffs,
+                smaCoeffs,
+                sar,
+                sma,
+              );
+              
+              if (aic < bestAIC && Number.isFinite(aic)) {
+                bestAIC = aic;
+                bestOrder = {
+                  ar: bestOrder.ar,
+                  ma: bestOrder.ma,
+                  diff: bestOrder.diff,
+                  sar,
+                  sma,
+                  seasonalDiff: 1,
+                  seasonalPeriod,
+                };
+              }
+            } catch (error) {
+              continue;
+            }
+          }
+        }
+      }
+    }
+
+    return bestOrder;
+  }
+
+  // Удаление выбросов через IQR метод
+  private removeOutliers(data: number[]): number[] {
+    if (data.length < 4) return data;
+    
+    const sorted = [...data].sort((a, b) => a - b);
+    const q1Index = Math.floor(sorted.length * 0.25);
+    const q3Index = Math.floor(sorted.length * 0.75);
+    const q1 = sorted[q1Index];
+    const q3 = sorted[q3Index];
+    const iqr = q3 - q1;
+    
+    const lowerBound = q1 - 1.5 * iqr;
+    const upperBound = q3 + 1.5 * iqr;
+    
+    // Заменяем выбросы на ближайшие валидные значения
+    return data.map(val => {
+      if (val < lowerBound) return Math.max(lowerBound, sorted[0]);
+      if (val > upperBound) return Math.min(upperBound, sorted[sorted.length - 1]);
+      return val;
+    });
+  }
+
+  // Сезонное дифференцирование
+  private seasonalDifference(data: number[], period: number, order: number): number[] {
+    if (order === 0 || data.length < period * 2) return data;
+    
+    const result: number[] = [];
+    for (let i = period; i < data.length; i++) {
+      result.push(data[i] - data[i - period]);
+    }
+    
+    if (order > 1) {
+      return this.seasonalDifference(result, period, order - 1);
+    }
+    
+    return result;
+  }
+
+  // Улучшенная подгонка AR через метод наименьших квадратов (Yule-Walker)
+  private fitARImproved(data: number[], order: number, lag: number = 1): number[] {
+    if (order === 0 || data.length < order + 5) {
+      return [];
+    }
+
+    // Вычисляем автокорреляции
+    const autocorrelations: number[] = [];
+    const mean = data.reduce((sum, val) => sum + val, 0) / data.length;
+    const variance = data.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / data.length;
+    
+    if (variance < 1e-10) {
+      return Array(order).fill(0.1);
+    }
+
+    for (let k = 0; k <= order; k++) {
+      let sum = 0;
+      for (let i = k; i < data.length; i++) {
+        sum += (data[i] - mean) * (data[i - k] - mean);
+      }
+      autocorrelations.push(sum / (data.length - k) / variance);
+    }
+
+    // Решаем систему Yule-Walker уравнений (упрощенная версия)
+    const coeffs: number[] = [];
+    for (let i = 1; i <= order; i++) {
+      let coeff = autocorrelations[i];
+      
+      // Учитываем предыдущие коэффициенты (упрощенная версия)
+      for (let j = 1; j < i; j++) {
+        coeff -= (coeffs[j - 1] || 0) * (autocorrelations[Math.abs(i - j)] || 0);
+      }
+      
+      // Нормализуем
+      if (Math.abs(autocorrelations[0]) > 1e-10) {
+        coeff /= autocorrelations[0];
+      }
+      
+      coeffs.push(Math.max(-0.99, Math.min(0.99, coeff))); // Ограничиваем для стабильности
+    }
+
+    return coeffs.length === order ? coeffs : Array(order).fill(0.1);
+  }
+
+  // Улучшенная подгонка MA через метод наименьших квадратов
+  private fitMAImproved(data: number[], order: number, lag: number = 1): number[] {
+    if (order === 0 || data.length < order + 5) {
+      return [];
+    }
+
+    // Упрощенная подгонка MA через минимизацию ошибок
+    const mean = data.reduce((sum, val) => sum + val, 0) / data.length;
+    const residuals: number[] = data.map(val => val - mean);
+    
+    const coeffs: number[] = [];
+    for (let i = 1; i <= order; i++) {
+      if (i * lag >= residuals.length) break;
+      
+      // Вычисляем корреляцию между текущими и лаговыми остатками
+      let sum = 0;
+      let count = 0;
+      for (let j = i * lag; j < residuals.length; j++) {
+        sum += residuals[j] * residuals[j - i * lag];
+        count++;
+      }
+      
+      const coeff = count > 0 ? sum / count / (mean * mean + 1) : 0;
+      coeffs.push(Math.max(-0.99, Math.min(0.99, coeff)));
+    }
+
+    return coeffs.length === order ? coeffs : Array(order).fill(0.1);
+  }
+
+  // Улучшенный прогноз ARIMA с учетом сезонности
+  private predictARIMAImproved(
+    data: number[],
+    arCoeffs: number[],
+    maCoeffs: number[],
+    steps: number,
+    sarCoeffs: number[] = [],
+    smaCoeffs: number[] = [],
+    seasonalPeriod: number = 0,
+  ): number {
+    if (data.length === 0) return 0;
+
+    const mean = data.reduce((sum, val) => sum + val, 0) / data.length;
+    let prediction = mean;
+
+    // AR компонент
+    for (let i = 0; i < arCoeffs.length && i < data.length; i++) {
+      prediction += arCoeffs[i] * (data[data.length - 1 - i] - mean);
+    }
+
+    // Сезонный AR компонент (SARIMA)
+    if (seasonalPeriod > 0 && sarCoeffs.length > 0 && data.length >= seasonalPeriod) {
+      for (let i = 0; i < sarCoeffs.length; i++) {
+        const lag = seasonalPeriod * (i + 1);
+        if (data.length >= lag) {
+          prediction += sarCoeffs[i] * (data[data.length - lag] - mean);
+        }
+      }
+    }
+
+    // MA компонент (упрощенный, так как нам нужны будущие ошибки)
+    // Используем исторические остатки как приближение
+    const historicalResiduals: number[] = [];
+    for (let i = Math.max(maCoeffs.length, 1); i < data.length; i++) {
+      let predicted = mean;
+      for (let j = 0; j < arCoeffs.length && i - j - 1 >= 0; j++) {
+        predicted += arCoeffs[j] * (data[i - j - 1] - mean);
+      }
+      historicalResiduals.push(data[i] - predicted);
+    }
+
+    if (historicalResiduals.length > 0) {
+      const avgResidual = historicalResiduals.reduce((sum, r) => sum + r, 0) / historicalResiduals.length;
+      for (let i = 0; i < maCoeffs.length && i < historicalResiduals.length; i++) {
+        prediction += maCoeffs[i] * (historicalResiduals[historicalResiduals.length - 1 - i] - avgResidual);
+      }
+    }
+
+    // Сезонный MA компонент
+    if (seasonalPeriod > 0 && smaCoeffs.length > 0 && historicalResiduals.length >= seasonalPeriod) {
+      for (let i = 0; i < smaCoeffs.length; i++) {
+        const lag = seasonalPeriod * (i + 1);
+        if (historicalResiduals.length >= lag) {
+          const seasonalResidual = historicalResiduals[historicalResiduals.length - lag];
+          prediction += smaCoeffs[i] * seasonalResidual;
+        }
+      }
+    }
+
+    // Затухание для дальних прогнозов
+    const decayFactor = Math.exp(-steps * 0.1);
+    prediction = mean + (prediction - mean) * decayFactor;
+
+    return prediction;
+  }
+
+  // Обратное сезонное дифференцирование
+  private undifferenceSeasonal(
+    original: number[],
+    prediction: number,
+    period: number,
+    order: number,
+  ): number {
+    if (order === 0 || original.length < period) return prediction;
+    
+    // Берем последнее значение из оригинального ряда (до сезонного дифференцирования)
+    const lastValue = original[original.length - period] || 0;
+    return prediction + lastValue;
+  }
+
+  // Расчет AIC (Akaike Information Criterion)
+  private calculateAIC(
+    data: number[],
+    arCoeffs: number[],
+    maCoeffs: number[],
+    ar: number,
+    ma: number,
+    diff: number,
+    sarCoeffs: number[] = [],
+    smaCoeffs: number[] = [],
+    sar: number = 0,
+    sma: number = 0,
+  ): number {
+    if (data.length < ar + ma + diff + 1) return Infinity;
+
+    // Рассчитываем остатки (residuals)
+    const residuals: number[] = [];
+    const mean = data.reduce((sum, val) => sum + val, 0) / data.length;
+    
+    for (let i = Math.max(ar, ma, sar * 7); i < data.length; i++) {
+      let predicted = mean;
+      
+      // AR компонент
+      for (let j = 0; j < ar && i - j - 1 >= 0; j++) {
+        predicted += (arCoeffs[j] || 0) * (data[i - j - 1] - mean);
+      }
+      
+      // SAR компонент
+      if (sar > 0) {
+        const period = 7; // Недельная сезонность
+        for (let j = 0; j < sar && i - period * (j + 1) >= 0; j++) {
+          predicted += (sarCoeffs[j] || 0) * (data[i - period * (j + 1)] - mean);
+        }
+      }
+      
+      residuals.push(data[i] - predicted);
+    }
+
+    if (residuals.length === 0) return Infinity;
+
+    // Рассчитываем сумму квадратов остатков
+    const ssr = residuals.reduce((sum, r) => sum + r * r, 0);
+    const mse = ssr / residuals.length;
+    
+    if (mse < 1e-10) return Infinity;
+
+    // Количество параметров
+    const k = ar + ma + diff + sar + sma + 1; // +1 для константы
+    
+    // AIC = n * ln(MSE) + 2 * k
+    const n = residuals.length;
+    const aic = n * Math.log(mse) + 2 * k;
+    
+    return Number.isFinite(aic) ? aic : Infinity;
+  }
+
   private difference(data: number[], order: number): number[] {
     if (order === 0) return data;
     const diff = data.slice(1).map((val, i) => val - data[i]);
@@ -1297,6 +2612,241 @@ export class EnhancedMLForecastingEngine {
       const dayAvg = revenue / counts[day];
       return dayAvg / avgRevenue; // Нормализуем относительно общего среднего
     });
+  }
+
+  // Улучшенная кастомная недельная сезонность с учетом трендов
+  private calculateCustomWeeklySeasonality(data: EnhancedTimeSeriesData[]): number[] {
+    const weekly = new Array(7).fill(0);
+    const counts = new Array(7).fill(0);
+    const weeklyTrends = new Array(7).fill(0);
+
+    // Разделяем данные на периоды для учета изменений
+    const midPoint = Math.floor(data.length / 2);
+    const firstHalf = data.slice(0, midPoint);
+    const secondHalf = data.slice(midPoint);
+
+    data.forEach((d) => {
+      weekly[d.dayOfWeek] += d.revenue;
+      counts[d.dayOfWeek]++;
+    });
+
+    // Рассчитываем тренды по дням недели
+    firstHalf.forEach((d) => {
+      weeklyTrends[d.dayOfWeek] -= d.revenue;
+    });
+    secondHalf.forEach((d) => {
+      weeklyTrends[d.dayOfWeek] += d.revenue;
+    });
+
+    const avgRevenue = data.reduce((sum, d) => sum + d.revenue, 0) / data.length;
+
+    return weekly.map((revenue, day) => {
+      if (counts[day] === 0) return 1;
+      const dayAvg = revenue / counts[day];
+      
+      // Учитываем тренд (если выручка растет, увеличиваем множитель)
+      const trend = weeklyTrends[day] / Math.max(1, counts[day]);
+      const trendAdjustment = Math.abs(trend) > avgRevenue * 0.1 
+        ? (trend / avgRevenue) * 0.1 
+        : 0;
+      
+      return (dayAvg / avgRevenue) * (1 + trendAdjustment);
+    });
+  }
+
+  // Улучшенная кастомная месячная сезонность
+  private calculateCustomMonthlySeasonality(data: EnhancedTimeSeriesData[]): number[] {
+    const monthly = new Array(12).fill(0);
+    const counts = new Array(12).fill(0);
+
+    data.forEach((d) => {
+      monthly[d.month] += d.revenue;
+      counts[d.month]++;
+    });
+
+    const avgRevenue = data.reduce((sum, d) => sum + d.revenue, 0) / data.length;
+
+    return monthly.map((revenue, month) => {
+      if (counts[month] === 0) return 1;
+      const monthAvg = revenue / counts[month];
+      return monthAvg / avgRevenue;
+    });
+  }
+
+  // Сезонность по времени месяца (начало/середина/конец)
+  private calculateMonthTimeSeasonality(data: EnhancedTimeSeriesData[]): {
+    start: number; // 1-10 дни
+    middle: number; // 11-20 дни
+    end: number; // 21-31 дни
+  } {
+    const startDays: number[] = [];
+    const middleDays: number[] = [];
+    const endDays: number[] = [];
+
+    data.forEach((d) => {
+      if (d.dayOfMonth <= 10) {
+        startDays.push(d.revenue);
+      } else if (d.dayOfMonth <= 20) {
+        middleDays.push(d.revenue);
+      } else {
+        endDays.push(d.revenue);
+      }
+    });
+
+    const avgRevenue = data.reduce((sum, d) => sum + d.revenue, 0) / data.length;
+
+    const startAvg = startDays.length > 0
+      ? startDays.reduce((sum, r) => sum + r, 0) / startDays.length
+      : avgRevenue;
+    const middleAvg = middleDays.length > 0
+      ? middleDays.reduce((sum, r) => sum + r, 0) / middleDays.length
+      : avgRevenue;
+    const endAvg = endDays.length > 0
+      ? endDays.reduce((sum, r) => sum + r, 0) / endDays.length
+      : avgRevenue;
+
+    return {
+      start: startAvg / avgRevenue,
+      middle: middleAvg / avgRevenue,
+      end: endAvg / avgRevenue,
+    };
+  }
+
+  // Получить множитель для времени месяца
+  private getMonthTimeMultiplier(dayOfMonth: number, seasonality: { start: number; middle: number; end: number }): number {
+    if (dayOfMonth <= 10) {
+      return Math.max(0.9, Math.min(1.1, seasonality.start));
+    } else if (dayOfMonth <= 20) {
+      return Math.max(0.95, Math.min(1.05, seasonality.middle));
+    } else {
+      return Math.max(0.9, Math.min(1.1, seasonality.end));
+    }
+  }
+
+  // Обнаружение changepoints (точек изменения тренда)
+  private detectChangepoints(data: EnhancedTimeSeriesData[]): number[] {
+    if (data.length < 14) return [];
+
+    const changepoints: number[] = [];
+    const windowSize = Math.max(7, Math.floor(data.length / 5));
+    const minChange = 0.15; // Минимальное изменение для обнаружения changepoint
+
+    for (let i = windowSize; i < data.length - windowSize; i += Math.floor(windowSize / 2)) {
+      const beforeWindow = data.slice(i - windowSize, i);
+      const afterWindow = data.slice(i, i + windowSize);
+
+      const beforeAvg = beforeWindow.reduce((sum, d) => sum + d.revenue, 0) / beforeWindow.length;
+      const afterAvg = afterWindow.reduce((sum, d) => sum + d.revenue, 0) / afterWindow.length;
+
+      const change = Math.abs((afterAvg - beforeAvg) / beforeAvg);
+      
+      if (change > minChange) {
+        changepoints.push(i);
+      }
+    }
+
+    return changepoints;
+  }
+
+  // Расчет трендов для сегментов между changepoints
+  private calculateTrendSegments(
+    data: EnhancedTimeSeriesData[],
+    changepoints: number[],
+  ): Array<{ start: number; end: number; trend: number }> {
+    const segments: Array<{ start: number; end: number; trend: number }> = [];
+    const points = [0, ...changepoints, data.length];
+
+    for (let i = 0; i < points.length - 1; i++) {
+      const start = points[i];
+      const end = points[i + 1];
+      const segment = data.slice(start, end);
+
+      if (segment.length < 3) continue;
+
+      const revenues = segment.map((d) => d.revenue);
+      const trend = this.calculateLinearTrend(revenues);
+      
+      segments.push({ start, end, trend });
+    }
+
+    return segments;
+  }
+
+  // Линейный тренд через метод наименьших квадратов
+  private calculateLinearTrend(revenues: number[]): number {
+    if (revenues.length < 2) return 0;
+
+    const n = revenues.length;
+    let sumX = 0;
+    let sumY = 0;
+    let sumXY = 0;
+    let sumX2 = 0;
+
+    for (let i = 0; i < n; i++) {
+      sumX += i;
+      sumY += revenues[i];
+      sumXY += i * revenues[i];
+      sumX2 += i * i;
+    }
+
+    const denominator = n * sumX2 - sumX * sumX;
+    if (Math.abs(denominator) < 1e-10) return 0;
+
+    const slope = (n * sumXY - sumX * sumY) / denominator;
+    return Number.isFinite(slope) ? slope : 0;
+  }
+
+  // Получить тренд на конкретном шаге с учетом changepoints
+  private getTrendAtStep(
+    segments: Array<{ start: number; end: number; trend: number }>,
+    changepoints: number[],
+    step: number,
+  ): number {
+    if (segments.length === 0) return 0;
+
+    // Находим сегмент, к которому относится этот шаг
+    for (const segment of segments) {
+      if (step >= segment.start && step < segment.end) {
+        return segment.trend;
+      }
+    }
+
+    // Если шаг за пределами всех сегментов, используем последний тренд
+    return segments[segments.length - 1]?.trend || 0;
+  }
+
+  // Расчет эффектов праздников по типам
+  private calculateHolidayEffectsByType(data: EnhancedTimeSeriesData[]): Map<string, number> {
+    const effects = new Map<string, number>();
+    const holidayDataByType = new Map<string, number[]>();
+    const regularData: number[] = [];
+
+    data.forEach((d) => {
+      if (d.isHoliday && d.holidayType) {
+        if (!holidayDataByType.has(d.holidayType)) {
+          holidayDataByType.set(d.holidayType, []);
+        }
+        holidayDataByType.get(d.holidayType)!.push(d.revenue);
+      } else {
+        regularData.push(d.revenue);
+      }
+    });
+
+    if (regularData.length === 0) return effects;
+
+    const avgRegularRevenue = regularData.reduce((sum, r) => sum + r, 0) / regularData.length;
+
+    holidayDataByType.forEach((revenues, type) => {
+      if (revenues.length > 0) {
+        const avgHolidayRevenue = revenues.reduce((sum, r) => sum + r, 0) / revenues.length;
+        const effect = avgRegularRevenue > 0 
+          ? (avgHolidayRevenue - avgRegularRevenue) / avgRegularRevenue 
+          : 0;
+        effects.set(type, effect);
+      }
+    });
+
+    return effects;
   }
 
   private calculateMonthlySeasonality(data: EnhancedTimeSeriesData[]): number[] {
@@ -1529,12 +3079,141 @@ export class EnhancedMLForecastingEngine {
     });
   }
 
+  // Улучшенное извлечение признаков с лаговыми признаками и rolling statistics
+  private extractLSTMFeaturesImproved(data: EnhancedTimeSeriesData[]): number[][] {
+    const revenues = data.map((d) => d.revenue).filter((r) => r > 0);
+    
+    // RobustScaler для устойчивости к выбросам
+    const sortedRevenues = [...revenues].sort((a, b) => a - b);
+    const q1 = sortedRevenues[Math.floor(sortedRevenues.length * 0.25)] || 0;
+    const q3 = sortedRevenues[Math.floor(sortedRevenues.length * 0.75)] || 1;
+    const median = sortedRevenues.length % 2 === 0
+      ? (sortedRevenues[sortedRevenues.length / 2 - 1] + sortedRevenues[sortedRevenues.length / 2]) / 2
+      : sortedRevenues[Math.floor(sortedRevenues.length / 2)];
+    const iqr = Math.max(1, q3 - q1);
+
+    // MinMaxScaler для других признаков
+    const maxRevenue = revenues.length > 0 ? Math.max(...revenues) : 1;
+    const minRevenue = revenues.length > 0 ? Math.min(...revenues) : 0;
+    const revenueRange = maxRevenue - minRevenue || 1;
+
+    return data.map((d, idx) => {
+      // RobustScaler для выручки (устойчив к выбросам)
+      const revenueNorm = (d.revenue - median) / iqr;
+      
+      // Лаговые признаки (lag features)
+      const lag1 = idx > 0 ? (data[idx - 1].revenue - median) / iqr : 0;
+      const lag7 = idx >= 7 ? (data[idx - 7].revenue - median) / iqr : 0;
+      
+      // Rolling statistics
+      const window7 = data.slice(Math.max(0, idx - 6), idx + 1);
+      const rollingMean7 = window7.length > 0
+        ? window7.reduce((sum, d) => sum + d.revenue, 0) / window7.length
+        : d.revenue;
+      const rollingStd7 = window7.length > 1
+        ? Math.sqrt(window7.reduce((sum, d) => sum + Math.pow(d.revenue - rollingMean7, 2), 0) / window7.length)
+        : 0;
+      const rollingMeanNorm = (rollingMean7 - median) / iqr;
+      const rollingStdNorm = rollingStd7 / iqr;
+      
+      // MinMax нормализация для других признаков
+      const checksCountNorm = d.checksCount !== undefined && d.checksCount > 0
+        ? Math.min(1, d.checksCount / 1000)
+        : 0;
+      
+      const avgCheckNorm = d.averageCheck !== undefined && revenueRange > 0
+        ? Math.min(1, Math.max(0, (d.averageCheck - minRevenue) / revenueRange))
+        : 0;
+
+      return [
+        revenueNorm, // RobustScaler нормализованная выручка
+        lag1, // Лаг 1 день
+        lag7, // Лаг 7 дней (неделя)
+        rollingMeanNorm, // Скользящее среднее 7 дней
+        rollingStdNorm, // Скользящее стандартное отклонение 7 дней
+        d.dayOfWeek / 7, // День недели [0, 1]
+        d.dayOfMonth / 31, // День месяца [0, 1]
+        d.month / 12, // Месяц [0, 1]
+        (d.temperature + 30) / 60, // Температура [-30, 30] -> [0, 1]
+        Math.min(1, d.precipitation / 20), // Осадки
+        d.humidity / 100, // Влажность
+        d.isWeekend ? 1 : 0, // Выходной
+        d.isHoliday ? 1 : 0, // Праздник
+        (d.socialSentiment + 1) / 2, // Социальный сентимент
+        (d.consumerConfidence + 1) / 2, // Доверие потребителей
+        d.movingAverage7 / (maxRevenue + 1), // Скользящее среднее (из данных)
+        Math.min(1, d.volatility / (median + 1)), // Волатильность (RobustScaler)
+        checksCountNorm,
+        avgCheckNorm,
+        d.returnRate ?? 0,
+        d.grossMargin ?? 0,
+        d.dataQuality ?? 0.5,
+      ];
+    });
+  }
+
   private trainLSTM(features: number[][], sequenceLength: number): any {
     // Упрощенная LSTM модель (обновлено количество признаков с учетом новых полей из Z-отчетов)
     const featureCount = features[0]?.length ?? 20;
     return {
       weights: Array(featureCount).fill(0.1),
       bias: 0.1,
+    };
+  }
+
+  // Улучшенное обучение LSTM с dropout регуляризацией
+  private trainLSTMImproved(features: number[][], sequenceLength: number): any {
+    const featureCount = features[0]?.length ?? 22;
+    const dropoutRate = 0.2; // 20% dropout для регуляризации
+    
+    // Инициализация весов с учетом dropout
+    const weights: number[] = [];
+    for (let i = 0; i < featureCount; i++) {
+      // Инициализация весов с учетом dropout (уменьшаем веса на dropout rate)
+      weights.push((Math.random() - 0.5) * 0.2 * (1 - dropoutRate));
+    }
+    
+    // Простое обучение через минимизацию ошибок на последовательностях
+    if (features.length >= sequenceLength) {
+      // Используем последние sequenceLength примеров для обучения
+      const trainingData = features.slice(-sequenceLength);
+      const targets = trainingData.map((f, idx) => {
+        if (idx < trainingData.length - 1) {
+          // Целевое значение - следующее значение выручки
+          return trainingData[idx + 1][0]; // Первый признак - выручка
+        }
+        return f[0];
+      });
+      
+      // Простая градиентная оптимизация (упрощенная версия)
+      for (let epoch = 0; epoch < 10; epoch++) {
+        for (let i = 0; i < trainingData.length - 1; i++) {
+          const input = trainingData[i];
+          const target = targets[i];
+          
+          // Прямой проход
+          let output = weights.reduce((sum, w, idx) => sum + w * (input[idx] || 0), 0.1);
+          
+          // Ошибка
+          const error = target - output;
+          
+          // Обратный проход (упрощенный градиентный спуск)
+          const learningRate = 0.01;
+          for (let j = 0; j < weights.length; j++) {
+            weights[j] += learningRate * error * (input[j] || 0);
+            // Применяем dropout (уменьшаем веса)
+            if (Math.random() < dropoutRate) {
+              weights[j] *= (1 - dropoutRate);
+            }
+          }
+        }
+      }
+    }
+    
+    return {
+      weights,
+      bias: 0.1,
+      dropoutRate,
     };
   }
 
@@ -1569,6 +3248,463 @@ export class EnhancedMLForecastingEngine {
     }
     
     return Math.max(0, prediction);
+  }
+
+  // Улучшенный прогноз LSTM с учетом лаговых признаков и rolling statistics
+  private predictLSTMImproved(
+    features: number[][],
+    weights: any,
+    steps: number,
+    originalData: EnhancedTimeSeriesData[],
+  ): number {
+    if (features.length === 0) return 0;
+    
+    const lastFeatures = features[features.length - 1];
+    const revenues = originalData.map((d) => d.revenue);
+    
+    // Денормализация: восстанавливаем параметры для RobustScaler
+    const sortedRevenues = [...revenues].sort((a, b) => a - b);
+    const q1 = sortedRevenues[Math.floor(sortedRevenues.length * 0.25)] || 0;
+    const q3 = sortedRevenues[Math.floor(sortedRevenues.length * 0.75)] || 1;
+    const median = sortedRevenues.length % 2 === 0
+      ? (sortedRevenues[sortedRevenues.length / 2 - 1] + sortedRevenues[sortedRevenues.length / 2]) / 2
+      : sortedRevenues[Math.floor(sortedRevenues.length / 2)];
+    const iqr = Math.max(1, q3 - q1);
+    
+    // Базовый прогноз с учетом dropout (во время инференса dropout отключен)
+    let predictionNorm = lastFeatures.reduce((sum, val, i) => {
+      const weight = weights.weights[i] || 0;
+      return sum + val * weight;
+    }, weights.bias);
+    
+    // Учитываем лаговые признаки для более точного прогноза
+    if (lastFeatures.length > 2) {
+      const lag1 = lastFeatures[1] || 0; // Лаг 1 день
+      const lag7 = lastFeatures[2] || 0; // Лаг 7 дней
+      predictionNorm = predictionNorm * 0.7 + (lag1 * 0.2 + lag7 * 0.1);
+    }
+    
+    // Денормализация
+    let prediction = predictionNorm * iqr + median;
+    
+    // Учитываем тренд из rolling statistics
+    if (lastFeatures.length > 4) {
+      const rollingMeanNorm = lastFeatures[3] || 0;
+      const rollingStdNorm = lastFeatures[4] || 0;
+      const rollingMean = rollingMeanNorm * iqr + median;
+      
+      // Корректируем прогноз на основе rolling mean
+      prediction = prediction * 0.6 + rollingMean * 0.4;
+    }
+    
+    // Учитываем сезонность дня недели
+    if (lastFeatures.length > 5) {
+      const dayOfWeekRaw = Math.round(lastFeatures[5] * 7);
+      const dayOfWeek = dayOfWeekRaw % 7;
+      const dayVariation = (dayOfWeek === 0 || dayOfWeek === 6) ? 1.05 : 0.98;
+      prediction *= dayVariation;
+    }
+    
+    return Math.max(0, prediction);
+  }
+
+  // Извлечение признаков для GRU (используем те же признаки, что и для LSTM)
+  private extractGRUFeatures(data: EnhancedTimeSeriesData[]): number[][] {
+    // GRU использует те же признаки, что и LSTM
+    return this.extractLSTMFeatures(data);
+  }
+
+  // Обучение GRU модели
+  private trainGRU(features: number[][], sequenceLength: number): any {
+    if (features.length === 0 || !features[0]) {
+      // Fallback на дефолтные веса
+      return {
+        resetWeights: Array(20).fill(0.12),
+        resetBias: 0.05,
+        updateWeights: Array(20).fill(0.1),
+        updateBias: 0.1,
+        candidateWeights: Array(20).fill(0.08),
+        candidateBias: 0.05,
+        outputWeights: Array(20).fill(0.1),
+        outputBias: 0.1,
+      };
+    }
+
+    const featureCount = features[0].length;
+    
+    // Простое обучение: вычисляем средние значения признаков и используем их для инициализации весов
+    const avgFeatures = Array(featureCount).fill(0);
+    for (const featureRow of features) {
+      for (let i = 0; i < featureCount; i++) {
+        if (Number.isFinite(featureRow[i])) {
+          avgFeatures[i] += featureRow[i];
+        }
+      }
+    }
+    
+    // Нормализуем средние значения
+    const featureSum = avgFeatures.reduce((sum, val) => sum + Math.abs(val), 0);
+    const normalizedFeatures = featureSum > 0 
+      ? avgFeatures.map(val => val / featureSum / featureCount)
+      : avgFeatures.map(() => 0.1 / featureCount);
+
+    return {
+      // Веса для reset gate - используем нормализованные признаки
+      resetWeights: normalizedFeatures.map(val => 0.12 + val * 0.1),
+      resetBias: 0.05,
+      // Веса для update gate
+      updateWeights: normalizedFeatures.map(val => 0.1 + val * 0.08),
+      updateBias: 0.1,
+      // Веса для candidate activation
+      candidateWeights: normalizedFeatures.map(val => 0.08 + val * 0.06),
+      candidateBias: 0.05,
+      // Финальные веса для выхода
+      outputWeights: normalizedFeatures.map(val => 0.1 + val * 0.08),
+      outputBias: 0.1,
+    };
+  }
+
+  // Предсказание на основе обученной GRU модели
+  private predictGRU(features: number[][], weights: any, steps: number, avgRevenue: number, revenueStd: number): number {
+    if (features.length === 0) return avgRevenue;
+    
+    const lastFeatures = features[features.length - 1];
+    
+    // GRU вычисление: более простая архитектура, чем LSTM
+    // 1. Reset gate: определяет, какая часть предыдущего состояния забывается
+    const resetGate = Math.tanh(
+      lastFeatures.reduce((sum, val, i) => sum + val * (weights.resetWeights[i] || 0.12), weights.resetBias || 0.05)
+    );
+    
+    // 2. Update gate: определяет баланс между старым и новым состоянием
+    const updateGate = Math.tanh(
+      lastFeatures.reduce((sum, val, i) => sum + val * (weights.updateWeights[i] || 0.1), weights.updateBias || 0.1)
+    );
+    
+    // 3. Candidate activation: новое состояние с учетом reset gate
+    const candidateActivation = Math.tanh(
+      lastFeatures.reduce((sum, val, i) => 
+        sum + val * (weights.candidateWeights[i] || 0.08) * resetGate, weights.candidateBias || 0.05
+      )
+    );
+    
+    // 4. Денормализуем нормализованную выручку (первый признак) для использования в hidden state
+    // revenueNorm = (revenue - avgRevenue) / (revenueStd + 1)
+    // revenue = revenueNorm * (revenueStd + 1) + avgRevenue
+    const denormalizedRevenue = lastFeatures[0] * (revenueStd + 1) + avgRevenue;
+    const hiddenState = (1 - updateGate) * candidateActivation * avgRevenue + updateGate * denormalizedRevenue;
+    
+    // 5. Выходной слой - денормализуем результат
+    const normalizedOutput = lastFeatures.reduce((sum, val, i) => 
+      sum + val * (weights.outputWeights[i] || 0.1), weights.outputBias || 0.1
+    );
+    
+    // Денормализуем: если normalizedOutput близок к 0, используем среднюю выручку
+    // Если normalizedOutput положительный, добавляем к средней выручке
+    let prediction = avgRevenue + normalizedOutput * revenueStd * 2;
+    
+    // Применяем hidden state к прогнозу
+    prediction = prediction * 0.6 + hiddenState * 0.4;
+    
+    // Учитываем тренд из последних значений для разных шагов
+    if (features.length >= 3) {
+      // Денормализуем последние значения выручки
+      const recentRevenues = features.slice(-3).map(f => {
+        const denorm = f[0] * (revenueStd + 1) + avgRevenue;
+        return Math.max(0, denorm);
+      });
+      
+      if (recentRevenues.length > 1 && recentRevenues[0] > 0) {
+        const trend = (recentRevenues[recentRevenues.length - 1] - recentRevenues[0]) / recentRevenues.length;
+        
+        // Применяем тренд с затуханием для дальних прогнозов (GRU более чувствителен к тренду)
+        const trendComponent = trend * steps * Math.exp(-steps * 0.12);
+        prediction += trendComponent;
+      }
+    }
+    
+    // Учитываем сезонность дня недели
+    if (lastFeatures.length > 1) {
+      const dayOfWeekRaw = Math.round(lastFeatures[1] * 7); // Восстанавливаем день недели (0-6)
+      const dayOfWeek = dayOfWeekRaw % 7;
+      // GRU лучше улавливает сезонные паттерны
+      const dayVariation = (dayOfWeek === 0 || dayOfWeek === 6) ? 1.08 : 0.95;
+      prediction *= dayVariation;
+    }
+    
+    // Обеспечиваем разумные границы прогноза
+    const minPrediction = avgRevenue * 0.3;
+    const maxPrediction = avgRevenue * 2.5;
+    prediction = Math.max(minPrediction, Math.min(maxPrediction, prediction));
+    
+    return Math.max(0, prediction);
+  }
+
+  // Проверка необходимости анализа интеграции GRU
+  private shouldAnalyzeGRUIntegration(): boolean {
+    // Анализируем раз в день или при первом запуске
+    if (!this.lastGRUAnalysisDate) {
+      return true;
+    }
+    const hoursSinceLastAnalysis = (Date.now() - this.lastGRUAnalysisDate.getTime()) / (1000 * 60 * 60);
+    return hoursSinceLastAnalysis >= 24; // Раз в 24 часа
+  }
+
+  // Анализ интеграции GRU в ансамбль
+  private analyzeGRUIntegration(
+    timeSeriesData: EnhancedTimeSeriesData[],
+    allPredictions: number[][],
+    futureData: Partial<EnhancedTimeSeriesData>[],
+  ): void {
+    const gruIndex = this.modelEnsemble.models.findIndex((m) => m.name === 'GRU');
+    const lstmIndex = this.modelEnsemble.models.findIndex((m) => m.name === 'LSTM');
+    
+    if (gruIndex === -1 || lstmIndex === -1) {
+      console.warn('⚠️  GRU или LSTM модель не найдена в ансамбле');
+      return;
+    }
+
+    const gruPredictions = allPredictions[gruIndex];
+    const lstmPredictions = allPredictions[lstmIndex];
+    
+    // Улучшенная проверка валидности данных
+    if (!gruPredictions || !lstmPredictions || gruPredictions.length === 0) {
+      console.warn('⚠️  GRU или LSTM прогнозы пусты или отсутствуют');
+      console.warn(`   GRU прогнозы: ${gruPredictions ? gruPredictions.length : 'null'}`);
+      console.warn(`   LSTM прогнозы: ${lstmPredictions ? lstmPredictions.length : 'null'}`);
+      return;
+    }
+
+    // Проверка на валидные числовые значения
+    const validGRUPredictions = gruPredictions.filter(p => Number.isFinite(p) && p >= 0);
+    const validLSTMPredictions = lstmPredictions.filter(p => Number.isFinite(p) && p >= 0);
+    
+    if (validGRUPredictions.length === 0) {
+      console.warn('⚠️  GRU прогнозы не содержат валидных значений');
+      console.warn(`   Примеры прогнозов: ${gruPredictions.slice(0, 5).join(', ')}`);
+      return;
+    }
+
+    // Проверка на одинаковые значения (может указывать на проблему)
+    const uniqueGRUValues = new Set(validGRUPredictions.map(p => Math.round(p * 100) / 100));
+    const uniqueLSTMValues = new Set(validLSTMPredictions.map(p => Math.round(p * 100) / 100));
+    
+    if (uniqueGRUValues.size === 1) {
+      console.warn(`⚠️  GRU возвращает одинаковые прогнозы: ${Array.from(uniqueGRUValues)[0]}`);
+      console.warn(`   Это может указывать на проблему в обучении модели`);
+    }
+
+    // 1. Сравнение точности GRU vs LSTM
+    const historicalAccuracy = this.calculateHistoricalModelAccuracy();
+    
+    if (historicalAccuracy.length === 0) {
+      console.warn('⚠️  Историческая точность не рассчитана (недостаточно данных)');
+      console.warn(`   Требуется минимум 14 дней данных, доступно: ${timeSeriesData.length}`);
+      return;
+    }
+    
+    if (gruIndex >= historicalAccuracy.length || lstmIndex >= historicalAccuracy.length) {
+      console.warn(`⚠️  Индексы моделей выходят за границы массива точности`);
+      console.warn(`   GRU индекс: ${gruIndex}, LSTM индекс: ${lstmIndex}, длина массива: ${historicalAccuracy.length}`);
+      return;
+    }
+    
+    const gruAccuracy = historicalAccuracy[gruIndex] ?? 0.01; // Минимальная точность вместо 0.5
+    const lstmAccuracy = historicalAccuracy[lstmIndex] ?? 0.01;
+    
+    // 2. Корреляция прогнозов GRU с другими моделями (с улучшенной обработкой)
+    const correlations: Record<string, number> = {};
+    for (let i = 0; i < allPredictions.length; i++) {
+      if (i !== gruIndex) {
+        const otherPredictions = allPredictions[i];
+        if (otherPredictions && otherPredictions.length === gruPredictions.length) {
+          const correlation = this.calculateCorrelation(gruPredictions, otherPredictions);
+          const modelName = this.modelEnsemble.models[i].name;
+          correlations[modelName] = correlation;
+        }
+      }
+    }
+
+    // 3. Вклад GRU в финальный прогноз (с улучшенной обработкой)
+    const ensembleWeights = this.modelEnsemble.models.map((m) => m.weight);
+    const gruWeight = ensembleWeights[gruIndex] ?? 0;
+    
+    if (gruWeight === 0) {
+      console.warn('⚠️  Вес GRU модели равен 0, модель не участвует в ансамбле');
+    }
+    
+    const avgGRUContribution = validGRUPredictions.reduce((sum, pred) => sum + pred, 0) / validGRUPredictions.length;
+    const avgEnsemblePrediction = allPredictions.reduce((sum, preds) => {
+      if (!preds || preds.length === 0) return sum;
+      const validPreds = preds.filter(p => Number.isFinite(p) && p >= 0);
+      if (validPreds.length === 0) return sum;
+      const avg = validPreds.reduce((s, p) => s + p, 0) / validPreds.length;
+      return sum + avg;
+    }, 0) / allPredictions.filter(p => p && p.length > 0).length;
+    
+    const gruContributionPercent = avgEnsemblePrediction > 0 
+      ? (avgGRUContribution * gruWeight) / avgEnsemblePrediction * 100 
+      : 0;
+
+    // 4. Стабильность прогнозов GRU
+    const gruVariance = this.calculateVariance(validGRUPredictions);
+    const gruMean = avgGRUContribution;
+    const gruStability = gruMean > 0 ? Math.max(0, Math.min(1, 1 - gruVariance / gruMean)) : 0;
+
+    // 5. Производительность (время выполнения) - с более точным измерением
+    const startTime = process.hrtime.bigint();
+    this.gruPredict(timeSeriesData, futureData);
+    const endTime = process.hrtime.bigint();
+    const gruExecutionTime = Number(endTime - startTime) / 1_000_000; // Конвертируем в миллисекунды
+
+    // Вывод результатов анализа с дополнительной диагностикой
+    console.log('\n=== Анализ интеграции GRU в ансамбль ===');
+    console.log(`Точность GRU: ${(gruAccuracy * 100).toFixed(1)}%`);
+    console.log(`Точность LSTM: ${(lstmAccuracy * 100).toFixed(1)}%`);
+    console.log(`Разница: ${((gruAccuracy - lstmAccuracy) * 100).toFixed(1)}%`);
+    
+    // Диагностическая информация
+    console.log(`\nДиагностика GRU:`);
+    console.log(`  Количество прогнозов: ${gruPredictions.length}`);
+    console.log(`  Валидных прогнозов: ${validGRUPredictions.length}`);
+    console.log(`  Уникальных значений: ${uniqueGRUValues.size}`);
+    console.log(`  Средний прогноз: ${avgGRUContribution.toFixed(2)}`);
+    console.log(`  Мин/Макс: ${Math.min(...validGRUPredictions).toFixed(2)} / ${Math.max(...validGRUPredictions).toFixed(2)}`);
+    console.log(`  Стандартное отклонение: ${Math.sqrt(gruVariance).toFixed(2)}`);
+    
+    console.log(`\nКорреляция GRU с другими моделями:`);
+    Object.entries(correlations).forEach(([model, corr]) => {
+      const corrStatus = Math.abs(corr) < 0.01 ? '⚠️  (очень низкая)' : 
+                        Math.abs(corr) < 0.3 ? '⚠️  (низкая)' : 
+                        Math.abs(corr) > 0.9 ? '⚠️  (очень высокая - возможно дублирование)' : '✅';
+      console.log(`  ${model}: ${corr.toFixed(3)} ${corrStatus}`);
+    });
+    
+    console.log(`\nВклад GRU в ансамбль: ${gruContributionPercent.toFixed(1)}%`);
+    console.log(`  Вес модели: ${(gruWeight * 100).toFixed(1)}%`);
+    console.log(`  Средний вклад: ${(avgGRUContribution * gruWeight).toFixed(2)}`);
+    
+    console.log(`Стабильность прогнозов GRU: ${(gruStability * 100).toFixed(1)}%`);
+    console.log(`Время выполнения GRU: ${gruExecutionTime.toFixed(2)}ms`);
+    
+    console.log(`\nОценка интеграции: ${this.evaluateGRUIntegrationQuality(
+      gruAccuracy,
+      lstmAccuracy,
+      correlations,
+      gruStability,
+    )}`);
+    console.log('========================================\n');
+
+    this.lastGRUAnalysisDate = new Date();
+  }
+
+  // Расчет корреляции между двумя массивами прогнозов
+  private calculateCorrelation(predictions1: number[], predictions2: number[]): number {
+    if (predictions1.length !== predictions2.length || predictions1.length === 0) {
+      return 0;
+    }
+
+    // Фильтруем только валидные значения
+    const validPairs: [number, number][] = [];
+    for (let i = 0; i < predictions1.length; i++) {
+      const p1 = predictions1[i];
+      const p2 = predictions2[i];
+      if (Number.isFinite(p1) && Number.isFinite(p2) && p1 >= 0 && p2 >= 0) {
+        validPairs.push([p1, p2]);
+      }
+    }
+
+    if (validPairs.length === 0) {
+      return 0;
+    }
+
+    const mean1 = validPairs.reduce((sum, [p1]) => sum + p1, 0) / validPairs.length;
+    const mean2 = validPairs.reduce((sum, [, p2]) => sum + p2, 0) / validPairs.length;
+
+    // Проверка на одинаковые значения (если все значения одинаковые, корреляция не определена)
+    const allSame1 = validPairs.every(([p1]) => Math.abs(p1 - mean1) < 1e-10);
+    const allSame2 = validPairs.every(([, p2]) => Math.abs(p2 - mean2) < 1e-10);
+    
+    if (allSame1 || allSame2) {
+      // Если все значения одинаковые, корреляция технически не определена
+      // Возвращаем 1, если оба массива имеют одинаковые значения, иначе 0
+      return (allSame1 && allSame2 && Math.abs(mean1 - mean2) < 1e-10) ? 1 : 0;
+    }
+
+    let numerator = 0;
+    let sumSq1 = 0;
+    let sumSq2 = 0;
+
+    for (const [p1, p2] of validPairs) {
+      const diff1 = p1 - mean1;
+      const diff2 = p2 - mean2;
+      numerator += diff1 * diff2;
+      sumSq1 += diff1 * diff1;
+      sumSq2 += diff2 * diff2;
+    }
+
+    const denominator = Math.sqrt(sumSq1 * sumSq2);
+    if (denominator < 1e-10) {
+      return 0; // Избегаем деления на ноль
+    }
+    
+    const correlation = numerator / denominator;
+    
+    // Ограничиваем корреляцию диапазоном [-1, 1] из-за возможных ошибок округления
+    return Math.max(-1, Math.min(1, correlation));
+  }
+
+  // Оценка качества интеграции GRU
+  private evaluateGRUIntegrationQuality(
+    gruAccuracy: number,
+    lstmAccuracy: number,
+    correlations: Record<string, number>,
+    stability: number,
+  ): string {
+    let score = 0;
+    let comments: string[] = [];
+
+    // Оценка точности (40% веса)
+    if (gruAccuracy >= lstmAccuracy) {
+      score += 0.4;
+      comments.push('GRU показывает сопоставимую или лучшую точность, чем LSTM');
+    } else if (gruAccuracy >= lstmAccuracy * 0.9) {
+      score += 0.3;
+      comments.push('GRU показывает хорошую точность, близкую к LSTM');
+    } else {
+      score += 0.2;
+      comments.push('GRU показывает приемлемую точность');
+    }
+
+    // Оценка разнообразия (30% веса) - низкая корреляция с другими моделями = хорошо
+    const avgCorrelation = Object.values(correlations).reduce((sum, corr) => sum + Math.abs(corr), 0) / Object.values(correlations).length;
+    if (avgCorrelation < 0.7) {
+      score += 0.3;
+      comments.push('GRU добавляет разнообразие в ансамбль (низкая корреляция)');
+    } else if (avgCorrelation < 0.85) {
+      score += 0.2;
+      comments.push('GRU имеет умеренную корреляцию с другими моделями');
+    } else {
+      score += 0.1;
+      comments.push('GRU имеет высокую корреляцию с другими моделями');
+    }
+
+    // Оценка стабильности (30% веса)
+    if (stability >= 0.8) {
+      score += 0.3;
+      comments.push('GRU показывает высокую стабильность прогнозов');
+    } else if (stability >= 0.6) {
+      score += 0.2;
+      comments.push('GRU показывает приемлемую стабильность');
+    } else {
+      score += 0.1;
+      comments.push('GRU показывает низкую стабильность');
+    }
+
+    const finalScore = Math.min(1, score);
+    const quality = finalScore >= 0.8 ? 'Отличная' : finalScore >= 0.6 ? 'Хорошая' : finalScore >= 0.4 ? 'Удовлетворительная' : 'Требует улучшения';
+    
+    return `${quality} (${(finalScore * 100).toFixed(0)}/100). ${comments.join('; ')}.`;
   }
 
   private extractFeatures(data: EnhancedTimeSeriesData[]): number[][] {
@@ -2005,6 +4141,33 @@ export class EnhancedMLForecastingEngine {
     return predictions;
   }
 
+  // LLM модель (асинхронная)
+  private async llmPredict(
+    data: EnhancedTimeSeriesData[],
+    futureData: Partial<EnhancedTimeSeriesData>[],
+  ): Promise<number[]> {
+    this.ensureLLMEngine();
+    if (!this.llmEngine || !this.llmEngine.isAvailable() || data.length < 7) {
+      // Fallback на простое среднее
+      const avgRevenue = data.length > 0
+        ? data.reduce((sum, d) => sum + d.revenue, 0) / data.length
+        : 0;
+      return futureData.map(() => Math.round(avgRevenue));
+    }
+
+    try {
+      const predictions = await this.llmEngine.predict(data, futureData);
+      return predictions;
+    } catch (error) {
+      console.error('[EnhancedMLForecast] LLM prediction error:', error);
+      // Fallback на простое среднее
+      const avgRevenue = data.length > 0
+        ? data.reduce((sum, d) => sum + d.revenue, 0) / data.length
+        : 0;
+      return futureData.map(() => Math.round(avgRevenue));
+    }
+  }
+
   private trainGradientBoosting(features: number[][], targets: number[]): any {
     // Упрощенная Gradient Boosting модель
     return {
@@ -2069,22 +4232,82 @@ export class EnhancedMLForecastingEngine {
     };
   }
 
+  // Улучшенный расчет сезонности дня недели с учетом исторических паттернов
   private calculateSeasonalFactor(
     dayOfWeek: number,
     month: number,
     data: EnhancedTimeSeriesData[],
   ): number {
-    const dayOfWeekData = data.filter((d) => d.dayOfWeek === dayOfWeek);
-    const monthData = data.filter((d) => d.month === month);
+    if (data.length === 0) return 1;
 
-    if (dayOfWeekData.length === 0 || monthData.length === 0) return 1;
-
-    const avgDayRevenue =
-      dayOfWeekData.reduce((sum, d) => sum + d.revenue, 0) / dayOfWeekData.length;
-    const avgMonthRevenue = monthData.reduce((sum, d) => sum + d.revenue, 0) / monthData.length;
     const overallAvg = data.reduce((sum, d) => sum + d.revenue, 0) / data.length;
+    if (overallAvg === 0) return 1;
 
-    return (avgDayRevenue + avgMonthRevenue) / (2 * overallAvg);
+    // 1. Базовый фактор дня недели (с учетом всех исторических данных)
+    const dayOfWeekData = data.filter((d) => d.dayOfWeek === dayOfWeek);
+    let dowFactor = 1;
+    if (dayOfWeekData.length > 0) {
+      const avgDayRevenue =
+        dayOfWeekData.reduce((sum, d) => sum + d.revenue, 0) / dayOfWeekData.length;
+      dowFactor = avgDayRevenue / overallAvg;
+    }
+
+    // 2. Фактор месяца (сезонность)
+    const monthData = data.filter((d) => d.month === month);
+    let monthFactor = 1;
+    if (monthData.length > 0) {
+      const avgMonthRevenue = monthData.reduce((sum, d) => sum + d.revenue, 0) / monthData.length;
+      monthFactor = avgMonthRevenue / overallAvg;
+    }
+
+    // 3. Взаимодействие дня недели и месяца (более точный паттерн)
+    // Например, понедельники в ноябре могут отличаться от понедельников в других месяцах
+    const dayMonthData = data.filter(
+      (d) => d.dayOfWeek === dayOfWeek && d.month === month,
+    );
+    let interactionFactor = 1;
+    if (dayMonthData.length >= 2) {
+      // Минимум 2 точки для надежной оценки
+      const avgDayMonthRevenue =
+        dayMonthData.reduce((sum, d) => sum + d.revenue, 0) / dayMonthData.length;
+      const expectedRevenue = overallAvg * dowFactor * monthFactor;
+      interactionFactor = expectedRevenue > 0 ? avgDayMonthRevenue / expectedRevenue : 1;
+    }
+
+    // 4. Учет недавнего тренда для конкретного дня недели
+    // Используем последние 30 дней (или меньше, если данных недостаточно)
+    const recentWindow = Math.min(30, data.length);
+    const recentDayData = data
+      .slice(-recentWindow)
+      .filter((d) => d.dayOfWeek === dayOfWeek);
+    
+    let trendFactor = 1;
+    if (recentDayData.length >= 4) {
+      // Разделяем на первую и вторую половину для оценки тренда
+      const mid = Math.floor(recentDayData.length / 2);
+      const firstHalf = recentDayData.slice(0, mid);
+      const secondHalf = recentDayData.slice(mid);
+      
+      const firstHalfAvg = firstHalf.reduce((sum, d) => sum + d.revenue, 0) / firstHalf.length;
+      const secondHalfAvg = secondHalf.reduce((sum, d) => sum + d.revenue, 0) / secondHalf.length;
+      
+      if (firstHalfAvg > 0) {
+        // Тренд показывает, как изменился этот день недели в последнее время
+        const trendChange = (secondHalfAvg - firstHalfAvg) / firstHalfAvg;
+        // Применяем умеренный тренд (50% от полного изменения)
+        trendFactor = 1 + trendChange * 0.5;
+      }
+    }
+
+    // 5. Комбинируем все факторы с весами
+    // Базовый фактор дня недели: 40%
+    // Фактор месяца: 30%
+    // Взаимодействие: 20%
+    // Тренд: 10%
+    const combinedFactor =
+      dowFactor * 0.4 + monthFactor * 0.3 + (dowFactor * monthFactor * interactionFactor) * 0.2 + (dowFactor * trendFactor) * 0.1;
+
+    return Math.max(0.5, Math.min(2.0, combinedFactor)); // Ограничиваем диапазон
   }
 
   private calculateTrendFactor(data: EnhancedTimeSeriesData[]): number {
@@ -2702,6 +4925,12 @@ export class EnhancedMLForecastingEngine {
           score *= 1 + Math.min(trendStrength + seasonalityStrength, 0.6);
           score *= 1 + Math.min(volatility, 0.4);
           break;
+        case 'GRU':
+          // GRU лучше работает с сезонностью и трендами, чем LSTM, но требует меньше данных
+          score *= 1 + Math.min(seasonalityStrength, 0.5);
+          score *= 1 + Math.min(trendStrength, 0.4);
+          score *= 1 + Math.min(volatility, 0.3);
+          break;
         case 'RandomForest':
           score *= 1 + Math.min(volatility, 0.4);
           score *= 1 + Math.min(recentGrowth, 0.3);
@@ -2940,5 +5169,36 @@ export class EnhancedMLForecastingEngine {
     }
 
     return forecasts;
+  }
+
+  /**
+   * Очищает все ресурсы: временные данные, кеши, LLM движок
+   * Вызывается после завершения анализа для освобождения памяти
+   */
+  public cleanup(): void {
+    // Очищаем временные данные временных рядов
+    this.timeSeriesData = [];
+    
+    // Очищаем расширенные данные продаж
+    this.enhancedSalesData = undefined;
+    
+    // Очищаем метрики точности по дням недели
+    this.dayOfWeekAccuracies.clear();
+    
+    // Очищаем отладочные данные ансамбля
+    this.lastAdaptiveDiagnostics = [];
+    
+    // Очищаем LLM движок, если он был инициализирован
+    if (this.llmEngine) {
+      this.llmEngine.cleanup();
+    }
+    
+    // Сбрасываем вес LLM модели
+    this.currentLLMWeight = 0.15;
+    
+    // Сбрасываем дату последнего анализа GRU
+    this.lastGRUAnalysisDate = undefined;
+    
+    console.log('[EnhancedML Forecast] Ресурсы очищены');
   }
 }

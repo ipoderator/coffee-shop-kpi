@@ -275,42 +275,95 @@ function findHeaderRowAndFormat(data: any[][]): {
   return { headerRowIndex: 0, headers: [], format: 'F2', matches: [] };
 }
 
+// Кеш для нормализации имен колонок
+const normalizeColumnNameCache = new Map<string, string>();
+
 function normalizeColumnName(name: string): string {
+  // Проверяем кеш
+  const cached = normalizeColumnNameCache.get(name);
+  if (cached !== undefined) {
+    return cached;
+  }
+
   // Remove BOM, normalize spaces, convert to lowercase
-  return name
+  const normalized = name
     .replace(/^\uFEFF/, '') // Remove BOM
     .toLowerCase()
     .trim()
     .replace(/\s+/g, ' '); // Normalize multiple spaces to single space
+
+  // Оптимизация: увеличен размер кеша для лучшей производительности
+  if (normalizeColumnNameCache.size < 2000) {
+    normalizeColumnNameCache.set(name, normalized);
+  }
+
+  return normalized;
 }
 
+// Кеш для результатов detectColumn
+// Ключ: JSON.stringify({ headers: headers.join('|'), mappings: mappings.join('|') })
+const detectColumnCache = new Map<string, string | undefined>();
+
 function detectColumn(headers: string[], mappings: readonly string[]): string | undefined {
+  // Создаем ключ кеша на основе headers и mappings
+  const cacheKey = `${headers.join('|')}::${mappings.join('|')}`;
+  const cached = detectColumnCache.get(cacheKey);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  let result: string | undefined;
+
   // 1. Точное совпадение (без normalize, strict)
   for (const mapping of mappings) {
     const found = headers.find((h) => h === mapping);
-    if (found) return found;
+    if (found) {
+      result = found;
+      break;
+    }
   }
 
-  // 2. Совпадение через normalize
-  const normalizedHeaders = headers.map((h) => ({
-    original: h,
-    normalized: normalizeColumnName(h),
-  }));
+  if (!result) {
+    // 2. Совпадение через normalize
+    // Кешируем нормализованные headers для повторного использования
+    const normalizedHeaders = headers.map((h) => ({
+      original: h,
+      normalized: normalizeColumnName(h),
+    }));
 
-  for (const mapping of mappings) {
-    const normalizedMapping = normalizeColumnName(mapping);
-    const found = normalizedHeaders.find((h) => h.normalized === normalizedMapping);
-    if (found) return found.original;
+    for (const mapping of mappings) {
+      const normalizedMapping = normalizeColumnName(mapping);
+      const found = normalizedHeaders.find((h) => h.normalized === normalizedMapping);
+      if (found) {
+        result = found.original;
+        break;
+      }
+    }
   }
 
-  // 3. Совпадение substring по normalize
-  for (const mapping of mappings) {
-    const normalizedMapping = normalizeColumnName(mapping);
-    const found = normalizedHeaders.find((h) => h.normalized.includes(normalizedMapping));
-    if (found) return found.original;
+  if (!result) {
+    // 3. Совпадение substring по normalize
+    const normalizedHeaders = headers.map((h) => ({
+      original: h,
+      normalized: normalizeColumnName(h),
+    }));
+
+    for (const mapping of mappings) {
+      const normalizedMapping = normalizeColumnName(mapping);
+      const found = normalizedHeaders.find((h) => h.normalized.includes(normalizedMapping));
+      if (found) {
+        result = found.original;
+        break;
+      }
+    }
   }
 
-  return undefined;
+  // Оптимизация: увеличен размер кеша для лучшей производительности
+  if (detectColumnCache.size < 1000) {
+    detectColumnCache.set(cacheKey, result);
+  }
+
+  return result;
 }
 
 const PAYMENT_EXCLUDED_KEYWORDS = ['возврат', 'refund', 'return'];
@@ -393,13 +446,27 @@ function isSummaryRow(row: any[]): boolean {
   });
 }
 
+// Кешируем регулярные выражения для парсинга дат
+const DATE_REGEXES = {
+  ruFormat: /^(\d{1,2})[.](\d{1,2})[.](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/,
+  slashFormat: /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/,
+};
+
+// Кеш для результатов парсинга дат (ограниченный размер)
+// Оптимизация: увеличен размер кеша для лучшей производительности
+const parseDateCache = new Map<string, Date | null>();
+const PARSE_DATE_CACHE_SIZE = 5000; // Увеличено с 1000 до 5000
+
+// Константа для Excel epoch (1899-12-30)
+const EXCEL_EPOCH = new Date(1899, 11, 30);
+const MS_PER_DAY = 86400000;
+
 function parseDate(value: any): Date | null {
   if (value === null || value === undefined) return null;
 
   // Excel serial date number
   if (typeof value === 'number' && isFinite(value)) {
-    const excelEpoch = new Date(1899, 11, 30);
-    return new Date(excelEpoch.getTime() + value * 86400000);
+    return new Date(EXCEL_EPOCH.getTime() + value * MS_PER_DAY);
   }
 
   // Already a Date instance
@@ -411,10 +478,16 @@ function parseDate(value: any): Date | null {
     const s = value.trim().replace(/\u00A0/g, ' ');
     if (!s) return null;
 
+    // Проверяем кеш
+    const cached = parseDateCache.get(s);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    let result: Date | null = null;
+
     // Common RU formats: DD.MM.YYYY[ HH:MM[:SS]]
-    const ruMatch = s.match(
-      /^(\d{1,2})[.](\d{1,2})[.](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/,
-    );
+    const ruMatch = s.match(DATE_REGEXES.ruFormat);
     if (ruMatch) {
       const day = parseInt(ruMatch[1], 10);
       const month = parseInt(ruMatch[2], 10) - 1;
@@ -423,54 +496,95 @@ function parseDate(value: any): Date | null {
       const minutes = ruMatch[5] ? parseInt(ruMatch[5], 10) : 0;
       const seconds = ruMatch[6] ? parseInt(ruMatch[6], 10) : 0;
       const d = new Date(year, month, day, hours, minutes, seconds);
-      return isNaN(d.getTime()) ? null : d;
+      result = isNaN(d.getTime()) ? null : d;
     }
 
-    // Alternate: DD/MM/YYYY
-    const slMatch = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (slMatch) {
-      const day = parseInt(slMatch[1], 10);
-      const month = parseInt(slMatch[2], 10) - 1;
-      const year = parseInt(slMatch[3], 10);
-      const d = new Date(year, month, day);
-      return isNaN(d.getTime()) ? null : d;
+    if (!result) {
+      // Alternate: DD/MM/YYYY
+      const slMatch = s.match(DATE_REGEXES.slashFormat);
+      if (slMatch) {
+        const day = parseInt(slMatch[1], 10);
+        const month = parseInt(slMatch[2], 10) - 1;
+        const year = parseInt(slMatch[3], 10);
+        const d = new Date(year, month, day);
+        result = isNaN(d.getTime()) ? null : d;
+      }
     }
 
-    // ISO-like: YYYY-MM-DD[THH:MM[:SS]]
-    const iso = new Date(s);
-    if (!isNaN(iso.getTime())) return iso;
-
-    // Excel serial number encoded as string
-    const numeric = Number(s);
-    if (!isNaN(numeric) && isFinite(numeric)) {
-      const excelEpoch = new Date(1899, 11, 30);
-      const d = new Date(excelEpoch.getTime() + numeric * 86400000);
-      return isNaN(d.getTime()) ? null : d;
+    if (!result) {
+      // ISO-like: YYYY-MM-DD[THH:MM[:SS]]
+      const iso = new Date(s);
+      if (!isNaN(iso.getTime())) {
+        result = iso;
+      }
     }
+
+    if (!result) {
+      // Excel serial number encoded as string
+      const numeric = Number(s);
+      if (!isNaN(numeric) && isFinite(numeric)) {
+        const d = new Date(EXCEL_EPOCH.getTime() + numeric * MS_PER_DAY);
+        result = isNaN(d.getTime()) ? null : d;
+      }
+    }
+
+    // Сохраняем в кеш
+    if (parseDateCache.size < PARSE_DATE_CACHE_SIZE) {
+      parseDateCache.set(s, result);
+    }
+
+    return result;
   }
 
   return null;
 }
 
+// Кеш для результатов парсинга чисел (ограниченный размер)
+// Оптимизация: увеличен размер кеша для лучшей производительности
+const parseAmountCache = new Map<string, number | null>();
+const PARSE_AMOUNT_CACHE_SIZE = 2000; // Увеличено с 500 до 2000
+
+// Предкомпилированные регулярные выражения для парсинга чисел
+const AMOUNT_REGEXES = {
+  spaces: /[\u00A0\u202F\s]/g,
+  dashes: /[–—−]/g,
+  parentheses: /^\((.*)\)$/,
+  nonNumeric: /[^0-9.,]/g,
+  allSeparators: /[.,]/g,
+};
+
 function parseAmount(value: any): number | null {
   if (typeof value === 'number' && isFinite(value)) return value;
 
   if (typeof value === 'string') {
+    const originalValue = value;
     let s = value.trim();
     if (!s) return null;
 
+    // Проверяем кеш для оригинального значения
+    const cached = parseAmountCache.get(originalValue);
+    if (cached !== undefined) {
+      return cached;
+    }
+
     // Normalize minus variations and NBSP/thin spaces
     s = s
-      .replace(/[\u00A0\u202F\s]/g, '') // remove spaces & NBSP
-      .replace(/[–—−]/g, '-') // dashes to minus
-      .replace(/^\((.*)\)$/, '-$1'); // (123) -> -123
+      .replace(AMOUNT_REGEXES.spaces, '') // remove spaces & NBSP
+      .replace(AMOUNT_REGEXES.dashes, '-') // dashes to minus
+      .replace(AMOUNT_REGEXES.parentheses, '-$1'); // (123) -> -123
 
     // Keep only digits, dots and commas and leading minus
     const sign = s.startsWith('-') ? -1 : 1;
     s = s.replace(/^-/, '');
-    s = s.replace(/[^0-9.,]/g, '');
+    s = s.replace(AMOUNT_REGEXES.nonNumeric, '');
 
-    if (!s) return null;
+    if (!s) {
+      const result = null;
+      if (parseAmountCache.size < PARSE_AMOUNT_CACHE_SIZE) {
+        parseAmountCache.set(originalValue, result);
+      }
+      return result;
+    }
 
     // Determine decimal separator as the last occurrence of dot or comma
     const lastDot = s.lastIndexOf('.');
@@ -484,11 +598,18 @@ function parseAmount(value: any): number | null {
       s = s.replace(decSep, '.');
     } else {
       // No decimal sep, just remove all separators
-      s = s.replace(/[.,]/g, '');
+      s = s.replace(AMOUNT_REGEXES.allSeparators, '');
     }
 
     const num = parseFloat(s);
-    return isNaN(num) ? null : sign * num;
+    const result = isNaN(num) ? null : sign * num;
+
+    // Сохраняем в кеш
+    if (parseAmountCache.size < PARSE_AMOUNT_CACHE_SIZE) {
+      parseAmountCache.set(originalValue, result);
+    }
+
+    return result;
   }
 
   return null;
@@ -502,27 +623,60 @@ function parseInteger(value: any): number | undefined {
 }
 
 export async function parseExcelFile(buffer: Buffer): Promise<ParseResult> {
-  const workbook = XLSX.read(buffer, { type: 'buffer' });
+  const startTime = performance.now();
+  const fileSizeKB = (buffer.length / 1024).toFixed(2);
+  
+  const readStartTime = performance.now();
+  // Оптимизация: отключаем парсинг дат, форматирования и стилей для ускорения
+  // Добавлены дополнительные опции для ускорения чтения больших файлов
+  const workbook = XLSX.read(buffer, {
+    type: 'buffer',
+    cellDates: false, // Не парсим даты автоматически (делаем это вручную быстрее)
+    cellNF: false, // Не парсим форматирование чисел
+    cellStyles: false, // Не парсим стили ячеек
+    dense: false, // Используем sparse arrays для экономии памяти
+    sheetStubs: false, // Не создаем stub ячейки для пустых значений
+  });
   const sheetName = workbook.SheetNames[0];
   const worksheet = workbook.Sheets[sheetName];
+  const readTime = (performance.now() - readStartTime).toFixed(2);
 
-  const data: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+  const parseDataStartTime = performance.now();
+  // Оптимизация: пропускаем пустые строки и используем null для пустых ячеек
+  // Добавлена опция raw: false для более быстрой обработки чисел
+  const data: any[][] = XLSX.utils.sheet_to_json(worksheet, {
+    header: 1,
+    defval: null, // Используем null вместо undefined для пустых ячеек
+    blankrows: false, // Пропускаем полностью пустые строки
+    raw: false, // Преобразуем числа в числа (быстрее чем raw: true)
+  });
+  const parseDataTime = (performance.now() - parseDataStartTime).toFixed(2);
 
   if (data.length < 2) {
     throw new Error('Файл должен содержать заголовки и хотя бы одну строку данных');
   }
 
+  const detectStartTime = performance.now();
   const { headerRowIndex, headers, format } = findHeaderRowAndFormat(data);
+  const detectTime = (performance.now() - detectStartTime).toFixed(2);
 
   if (!headers || headers.length === 0) {
     throw new Error('Не удалось определить строку заголовков для файла.');
   }
 
+  const parseStartTime = performance.now();
+  let result: ParseResult;
   if (format === 'F1') {
-    return parseExcelF1(data, headerRowIndex, headers);
+    result = parseExcelF1(data, headerRowIndex, headers);
+  } else {
+    result = parseExcelF2(data, headerRowIndex, headers);
   }
+  const parseTime = (performance.now() - parseStartTime).toFixed(2);
+  
+  const totalTime = (performance.now() - startTime).toFixed(2);
+  log(`📊 Парсинг Excel: ${fileSizeKB}KB, ${result.rows.length} строк, формат ${format} | Чтение: ${readTime}ms, Определение колонок: ${detectTime}ms, Парсинг: ${parseTime}ms, Всего: ${totalTime}ms`, 'fileParser');
 
-  return parseExcelF2(data, headerRowIndex, headers);
+  return result;
 }
 
 function parseExcelF1(data: any[][], headerRowIndex: number, headers: string[]): ParseResult {
@@ -559,19 +713,22 @@ function parseExcelF1(data: any[][], headerRowIndex: number, headers: string[]):
   const rows: ParsedRow[] = [];
   const errors: ParseError[] = [];
 
+  // Оптимизация: inline функция для быстрого доступа к значениям
   const getAmount = (row: any[], index: number): number | null => {
-    if (index < 0) return null;
-    const parsed = parseAmount(row[index]);
-    return parsed === null ? null : parsed;
+    if (index < 0 || index >= row.length) return null;
+    return parseAmount(row[index]);
   };
 
-  for (let i = headerRowIndex + 1; i < data.length; i++) {
+  // Оптимизация: предвычисляем длину массива для более быстрого доступа
+  const dataLength = data.length;
+  for (let i = headerRowIndex + 1; i < dataLength; i++) {
     const row = data[i];
     if (!row || row.length === 0) continue;
     if (isSummaryRow(row)) continue;
 
-    const rawDate = dateIndex >= 0 ? row[dateIndex] : undefined;
-    const date = dateIndex >= 0 ? parseDate(rawDate) : null;
+    // Оптимизация: проверяем индекс один раз
+    const rawDate = dateIndex >= 0 && dateIndex < row.length ? row[dateIndex] : undefined;
+    const date = rawDate !== undefined ? parseDate(rawDate) : null;
 
     const cashIncome = getAmount(row, cashIncomeIndex);
     const terminalIncome = getAmount(row, terminalIncomeIndex);
@@ -737,38 +894,49 @@ function parseExcelF2(data: any[][], headerRowIndex: number, headers: string[]):
   const rawRows: ParsedRow[] = [];
   const errors: ParseError[] = [];
 
-  for (let i = headerRowIndex + 1; i < data.length; i++) {
+  // Оптимизация: предвычисляем длину массива для более быстрого доступа
+  // Предвыделяем память для массива (примерная оценка размера)
+  const dataLength = data.length;
+  const estimatedRows = Math.max(0, dataLength - headerRowIndex - 1);
+  rawRows.length = estimatedRows; // Предвыделяем память
+  
+  // Оптимизация: ранний выход при обнаружении пустых данных
+  if (dataLength <= headerRowIndex + 1) {
+    throw new Error('Файл не содержит данных после строки заголовков');
+  }
+
+  let validRowIndex = 0; // Индекс для валидных строк
+  for (let i = headerRowIndex + 1; i < dataLength; i++) {
     const row = data[i];
+    // Оптимизация: быстрая проверка пустых строк
     if (!row || row.length === 0) continue;
+    // Оптимизация: проверка summary row только если строка содержит текст
     if (isSummaryRow(row)) continue;
 
-    const rawDate = dateIndex >= 0 ? row[dateIndex] : undefined;
-    const date = dateIndex >= 0 ? parseDate(rawDate) : null;
+    // Оптимизация: проверяем индекс и длину массива один раз
+    const rawDate = dateIndex >= 0 && dateIndex < row.length ? row[dateIndex] : undefined;
+    const date = rawDate !== undefined ? parseDate(rawDate) : null;
 
-    const year = yearIndex >= 0 ? parseInteger(row[yearIndex]) : undefined;
-    const month = monthIndex >= 0 ? parseInteger(row[monthIndex]) : undefined;
+    // Оптимизация: проверяем индексы и длину массива один раз для каждого поля
+    const rowLength = row.length;
+    const year = yearIndex >= 0 && yearIndex < rowLength ? parseInteger(row[yearIndex]) : undefined;
+    const month = monthIndex >= 0 && monthIndex < rowLength ? parseInteger(row[monthIndex]) : undefined;
 
-    const costOfGoods = costOfGoodsIndex >= 0 ? parseAmount(row[costOfGoodsIndex]) : undefined;
-    const checksCount = checksCountIndex >= 0 ? parseInteger(row[checksCountIndex]) : undefined;
-    const cashPayment = cashPaymentIndex >= 0 ? parseAmount(row[cashPaymentIndex]) : undefined;
-    const terminalPayment =
-      terminalPaymentIndex >= 0 ? parseAmount(row[terminalPaymentIndex]) : undefined;
-    const qrPayment = qrPaymentIndex >= 0 ? parseAmount(row[qrPaymentIndex]) : undefined;
-    const sbpPayment = sbpPaymentIndex >= 0 ? parseAmount(row[sbpPaymentIndex]) : undefined;
+    const costOfGoods = costOfGoodsIndex >= 0 && costOfGoodsIndex < rowLength ? parseAmount(row[costOfGoodsIndex]) : undefined;
+    const checksCount = checksCountIndex >= 0 && checksCountIndex < rowLength ? parseInteger(row[checksCountIndex]) : undefined;
+    const cashPayment = cashPaymentIndex >= 0 && cashPaymentIndex < rowLength ? parseAmount(row[cashPaymentIndex]) : undefined;
+    const terminalPayment = terminalPaymentIndex >= 0 && terminalPaymentIndex < rowLength ? parseAmount(row[terminalPaymentIndex]) : undefined;
+    const qrPayment = qrPaymentIndex >= 0 && qrPaymentIndex < rowLength ? parseAmount(row[qrPaymentIndex]) : undefined;
+    const sbpPayment = sbpPaymentIndex >= 0 && sbpPaymentIndex < rowLength ? parseAmount(row[sbpPaymentIndex]) : undefined;
 
-    const refundChecksCount =
-      refundChecksCountIndex >= 0 ? parseInteger(row[refundChecksCountIndex]) : undefined;
-    const refundCashPayment =
-      refundCashPaymentIndex >= 0 ? parseAmount(row[refundCashPaymentIndex]) : undefined;
-    const refundTerminalPayment =
-      refundTerminalPaymentIndex >= 0 ? parseAmount(row[refundTerminalPaymentIndex]) : undefined;
-    const refundQrPayment =
-      refundQrPaymentIndex >= 0 ? parseAmount(row[refundQrPaymentIndex]) : undefined;
-    const refundSbpPayment =
-      refundSbpPaymentIndex >= 0 ? parseAmount(row[refundSbpPaymentIndex]) : undefined;
+    const refundChecksCount = refundChecksCountIndex >= 0 && refundChecksCountIndex < rowLength ? parseInteger(row[refundChecksCountIndex]) : undefined;
+    const refundCashPayment = refundCashPaymentIndex >= 0 && refundCashPaymentIndex < rowLength ? parseAmount(row[refundCashPaymentIndex]) : undefined;
+    const refundTerminalPayment = refundTerminalPaymentIndex >= 0 && refundTerminalPaymentIndex < rowLength ? parseAmount(row[refundTerminalPaymentIndex]) : undefined;
+    const refundQrPayment = refundQrPaymentIndex >= 0 && refundQrPaymentIndex < rowLength ? parseAmount(row[refundQrPaymentIndex]) : undefined;
+    const refundSbpPayment = refundSbpPaymentIndex >= 0 && refundSbpPaymentIndex < rowLength ? parseAmount(row[refundSbpPaymentIndex]) : undefined;
 
     let amount: number | null = null;
-    if (amountIndex >= 0) {
+    if (amountIndex >= 0 && amountIndex < rowLength) {
       amount = parseAmount(row[amountIndex]);
     } else if (usePaymentColumns) {
       const totalIncome =
@@ -820,7 +988,8 @@ function parseExcelF2(data: any[][], headerRowIndex: number, headers: string[]):
       continue;
     }
 
-    rawRows.push({
+    // Оптимизация: используем прямое присваивание вместо push для предвыделенного массива
+    rawRows[validRowIndex++] = {
       date,
       year: year ?? date.getFullYear(),
       month: month ?? date.getMonth() + 1,
@@ -836,7 +1005,15 @@ function parseExcelF2(data: any[][], headerRowIndex: number, headers: string[]):
       refundTerminalPayment: refundTerminalPayment ?? undefined,
       refundQrPayment: refundQrPayment ?? undefined,
       refundSbpPayment: refundSbpPayment ?? undefined,
-    });
+    };
+  }
+
+  // Оптимизация: обрезаем массив до реального размера
+  rawRows.length = validRowIndex;
+
+  // Оптимизация: ранний выход если нет валидных строк
+  if (rawRows.length === 0) {
+    throw new Error('Не удалось извлечь ни одной валидной строки данных');
   }
 
   const aggregatedRows = aggregateRowsByDay(rawRows);
@@ -897,14 +1074,29 @@ function aggregateRowsByDay(rows: ParsedRow[]): ParsedRow[] {
     return [];
   }
 
-  const aggregation = new Map<string, AggregationState>();
+  // Оптимизация: используем числовой ключ вместо строкового для более быстрого сравнения
+  // Формат: YYYYMMDD (например, 20240115) - числовой ключ быстрее строкового
+  const aggregation = new Map<number, AggregationState>();
+
+  // Оптимизация: функция для вычисления числового ключа дня без создания Date объекта
+  const getDayKey = (date: Date): number => {
+    const year = date.getFullYear();
+    const month = date.getMonth() + 1;
+    const day = date.getDate();
+    // Числовой формат YYYYMMDD для быстрого сравнения (без padStart)
+    return year * 10000 + month * 100 + day;
+  };
 
   for (const row of rows) {
-    const day = new Date(row.date.getFullYear(), row.date.getMonth(), row.date.getDate());
-    const key = day.toISOString();
+    // Оптимизация: вычисляем ключ напрямую из row.date без создания нового Date объекта
+    const date = row.date;
+    const key = getDayKey(date);
 
     let state = aggregation.get(key);
     if (!state) {
+      // Оптимизация: создаем Date объект только один раз при создании нового состояния
+      // Используем UTC для избежания проблем с часовыми поясами
+      const day = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
       state = {
         day,
         amountSum: 0,
@@ -933,9 +1125,11 @@ function aggregateRowsByDay(rows: ParsedRow[]): ParsedRow[] {
       aggregation.set(key, state);
     }
 
+    // Оптимизация: используем оператор += для накопления сумм
     state.amountSum += row.amount;
     state.checksSum += row.checksCount ?? 1;
 
+    // Оптимизация: проверяем undefined один раз и используем флаги
     if (row.costOfGoods !== undefined) {
       state.costOfGoodsSum += row.costOfGoods;
       state.hasCostOfGoods = true;
@@ -978,53 +1172,62 @@ function aggregateRowsByDay(rows: ParsedRow[]): ParsedRow[] {
     }
   }
 
-  return Array.from(aggregation.values())
-    .sort((a, b) => a.day.getTime() - b.day.getTime())
-    .map((state) => {
-      const aggregatedRow: ParsedRow = {
-        date: state.day,
-        year: state.day.getFullYear(),
-        month: state.day.getMonth() + 1,
-        amount: state.amountSum,
-        checksCount: state.checksSum,
-      };
+  // Оптимизация: сортируем по числовому ключу (быстрее чем строковый)
+  // и создаем результат за один проход
+  const sortedKeys = Array.from(aggregation.keys()).sort((a, b) => a - b);
+  return sortedKeys.map((key) => {
+    const state = aggregation.get(key)!;
+    // Оптимизация: предвычисляем year и month один раз
+    const year = state.day.getFullYear();
+    const month = state.day.getMonth() + 1;
+    const aggregatedRow: ParsedRow = {
+      date: state.day,
+      year,
+      month,
+      amount: state.amountSum,
+      checksCount: state.checksSum,
+    };
 
-      if (state.hasCostOfGoods) {
-        aggregatedRow.costOfGoods = state.costOfGoodsSum;
-      }
-      if (state.hasCashPayment) {
-        aggregatedRow.cashPayment = state.cashPaymentSum;
-      }
-      if (state.hasTerminalPayment) {
-        aggregatedRow.terminalPayment = state.terminalPaymentSum;
-      }
-      if (state.hasQrPayment) {
-        aggregatedRow.qrPayment = state.qrPaymentSum;
-      }
-      if (state.hasSbpPayment) {
-        aggregatedRow.sbpPayment = state.sbpPaymentSum;
-      }
-      if (state.hasRefundChecks) {
-        aggregatedRow.refundChecksCount = state.refundChecksSum;
-      }
-      if (state.hasRefundCash) {
-        aggregatedRow.refundCashPayment = state.refundCashPaymentSum;
-      }
-      if (state.hasRefundTerminal) {
-        aggregatedRow.refundTerminalPayment = state.refundTerminalPaymentSum;
-      }
-      if (state.hasRefundQr) {
-        aggregatedRow.refundQrPayment = state.refundQrPaymentSum;
-      }
-      if (state.hasRefundSbp) {
-        aggregatedRow.refundSbpPayment = state.refundSbpPaymentSum;
-      }
+    // Условно добавляем поля только если они были заполнены
+    if (state.hasCostOfGoods) {
+      aggregatedRow.costOfGoods = state.costOfGoodsSum;
+    }
+    if (state.hasCashPayment) {
+      aggregatedRow.cashPayment = state.cashPaymentSum;
+    }
+    if (state.hasTerminalPayment) {
+      aggregatedRow.terminalPayment = state.terminalPaymentSum;
+    }
+    if (state.hasQrPayment) {
+      aggregatedRow.qrPayment = state.qrPaymentSum;
+    }
+    if (state.hasSbpPayment) {
+      aggregatedRow.sbpPayment = state.sbpPaymentSum;
+    }
+    if (state.hasRefundChecks) {
+      aggregatedRow.refundChecksCount = state.refundChecksSum;
+    }
+    if (state.hasRefundCash) {
+      aggregatedRow.refundCashPayment = state.refundCashPaymentSum;
+    }
+    if (state.hasRefundTerminal) {
+      aggregatedRow.refundTerminalPayment = state.refundTerminalPaymentSum;
+    }
+    if (state.hasRefundQr) {
+      aggregatedRow.refundQrPayment = state.refundQrPaymentSum;
+    }
+    if (state.hasRefundSbp) {
+      aggregatedRow.refundSbpPayment = state.refundSbpPaymentSum;
+    }
 
-      return aggregatedRow;
-    });
+    return aggregatedRow;
+  });
 }
 
 export async function parseCSVFile(buffer: Buffer): Promise<ParseResult> {
+  const startTime = performance.now();
+  const fileSizeKB = (buffer.length / 1024).toFixed(2);
+  
   // Remove BOM if present
   let csvText = buffer.toString('utf-8');
   if (csvText.charCodeAt(0) === 0xfeff) {
@@ -1032,11 +1235,14 @@ export async function parseCSVFile(buffer: Buffer): Promise<ParseResult> {
   }
 
   return new Promise((resolve, reject) => {
+    const parseStartTime = performance.now();
     Papa.parse(csvText, {
       header: true,
       skipEmptyLines: true,
       complete: (results) => {
         try {
+          const parseTime = (performance.now() - parseStartTime).toFixed(2);
+          
           if (!results.data || results.data.length === 0) {
             throw new Error('CSV файл пуст');
           }
@@ -1163,6 +1369,9 @@ export async function parseCSVFile(buffer: Buffer): Promise<ParseResult> {
             }
           }
 
+          const totalTime = (performance.now() - startTime).toFixed(2);
+          log(`📊 Парсинг CSV: ${fileSizeKB}KB, ${rows.length} строк | Парсинг: ${parseTime}ms, Всего: ${totalTime}ms`, 'fileParser');
+          
           resolve({
             rows,
             columnsDetected: {
@@ -1198,12 +1407,17 @@ export async function parseCSVFile(buffer: Buffer): Promise<ParseResult> {
 }
 
 export async function parsePDFFile(buffer: Buffer): Promise<ParseResult> {
+  const startTime = performance.now();
+  const fileSizeKB = (buffer.length / 1024).toFixed(2);
+  
   // Use PDFParse from the pdf-parse module
   const { PDFParse } = pdfParse as any;
   const parser = new PDFParse({ data: buffer });
 
+  const extractStartTime = performance.now();
   const result = await parser.getText();
   const text = result.text;
+  const extractTime = (performance.now() - extractStartTime).toFixed(2);
 
   // Clean up
   await parser.destroy();
@@ -1293,6 +1507,9 @@ export async function parsePDFFile(buffer: Buffer): Promise<ParseResult> {
   // Sort by date descending (most recent first)
   rows.sort((a, b) => b.date.getTime() - a.date.getTime());
 
+  const totalTime = (performance.now() - startTime).toFixed(2);
+  log(`📊 Парсинг PDF: ${fileSizeKB}KB, ${rows.length} строк | Извлечение текста: ${extractTime}ms, Всего: ${totalTime}ms`, 'fileParser');
+
   return {
     rows,
     columnsDetected: {
@@ -1310,10 +1527,21 @@ export async function parsePDFFile(buffer: Buffer): Promise<ParseResult> {
 export async function parseSalesPositionsExcelFile(
   buffer: Buffer,
 ): Promise<SalesPositionsFullParseResult> {
-  const workbook = XLSX.read(buffer, { type: 'buffer' });
+  // Оптимизация: отключаем парсинг дат, форматирования и стилей для ускорения
+  const workbook = XLSX.read(buffer, {
+    type: 'buffer',
+    cellDates: false,
+    cellNF: false,
+    cellStyles: false,
+  });
   const sheetName = workbook.SheetNames[0];
   const worksheet = workbook.Sheets[sheetName];
-  const data: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+  // Оптимизация: пропускаем пустые строки
+  const data: any[][] = XLSX.utils.sheet_to_json(worksheet, {
+    header: 1,
+    defval: null,
+    blankrows: false,
+  });
 
   if (data.length < 2) {
     throw new Error('Файл должен содержать заголовки и хотя бы одну строку данных');

@@ -573,6 +573,19 @@ export interface RevenueForecast {
     economicCycleAnalysis?: boolean;
     localEventAnalysis?: boolean;
     customerBehaviorAnalysis?: boolean;
+    modelQualityMetrics?: Record<string, number>; // Метрики качества ML моделей (arima, prophet, lstm, llm, etc.)
+    llmStatus?: {
+      enabled: boolean;
+      available: boolean;
+      metrics?: {
+        totalRequests: number;
+        successfulRequests: number;
+        failedRequests: number;
+        cacheHits: number;
+        averageResponseTime: number;
+        successRate: number;
+      };
+    };
   };
 }
 
@@ -682,6 +695,35 @@ export interface AnalyticsPeriod {
   preset?: AnalyticsDateFilterPreset;
 }
 
+export interface MLAnomaly {
+  date: string;
+  revenue: number;
+  expectedRevenue: number;
+  deviation: number; // Процент отклонения
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  type: 'minimum' | 'maximum' | 'spike' | 'drop' | 'pattern';
+  explanation: string; // Объяснение от ML модели
+  recommendations?: string[];
+}
+
+export interface MLModelMetrics {
+  arima?: number;
+  prophet?: number;
+  lstm?: number;
+  linear?: number;
+  movingAverage?: number;
+  overall?: number; // Общая метрика качества (0-1)
+}
+
+export interface MLAnalysis {
+  anomalies: MLAnomaly[];
+  modelQuality: MLModelMetrics;
+  minRevenueAnomaly?: MLAnomaly; // Аномалия с минимальной выручкой
+  maxRevenueAnomaly?: MLAnomaly; // Аномалия с максимальной выручкой
+  confidence: number; // Уверенность модели в анализе (0-1)
+  dataPoints: number; // Количество точек данных для анализа
+}
+
 export interface AnalyticsResponse {
   kpi: KPIMetrics;
   daily?: PeriodData[];
@@ -699,6 +741,8 @@ export interface AnalyticsResponse {
     trendAnalysis: TrendAnalysis;
     marketSegments: MarketSegment[];
   };
+  // ML анализ для резюме
+  mlAnalysis?: MLAnalysis;
   hasCostData?: boolean;
   period?: AnalyticsPeriod;
 }
@@ -1023,3 +1067,56 @@ export const importBatches = pgTable('import_batches', {
 });
 
 export type ImportBatch = typeof importBatches.$inferSelect;
+
+// Forecast Predictions (forecast_predictions) — сохранение прогнозов для обратной связи
+export const forecastPredictions = pgTable('forecast_predictions', {
+  id: varchar('id')
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  uploadId: varchar('upload_id').notNull(),
+  modelName: varchar('model_name').notNull(), // ARIMA, Prophet, LSTM, GRU, Linear, MovingAverage, Ensemble, LLM
+  forecastDate: timestamp('forecast_date').notNull(), // Дата, на которую сделан прогноз
+  actualDate: timestamp('actual_date').notNull(), // Дата фактических данных (обычно совпадает с forecastDate)
+  predictedRevenue: real('predicted_revenue').notNull(),
+  actualRevenue: real('actual_revenue'), // Заполняется при наличии реальных данных
+  dayOfWeek: integer('day_of_week'), // 0-6 (0=воскресенье)
+  horizon: integer('horizon').notNull(), // Горизонт прогноза в днях (1, 2, 3, ...)
+  mape: real('mape'), // Mean Absolute Percentage Error (заполняется при наличии actualRevenue)
+  mae: real('mae'), // Mean Absolute Error
+  rmse: real('rmse'), // Root Mean Square Error
+  factors: jsonb('factors').$type<ForecastData['factors'] | null>(), // Факторы влияния из прогноза
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export const insertForecastPredictionSchema = createInsertSchema(forecastPredictions).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertForecastPrediction = z.infer<typeof insertForecastPredictionSchema>;
+export type ForecastPrediction = typeof forecastPredictions.$inferSelect;
+
+// Model Accuracy Metrics (model_accuracy_metrics) — агрегированные метрики точности моделей
+export const modelAccuracyMetrics = pgTable('model_accuracy_metrics', {
+  id: varchar('id')
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  modelName: varchar('model_name').notNull(), // ARIMA, Prophet, LSTM, GRU, Linear, MovingAverage, Ensemble, LLM
+  dayOfWeek: integer('day_of_week'), // null = все дни недели, 0-6 = конкретный день
+  horizon: integer('horizon'), // null = все горизонты, 1+ = конкретный горизонт
+  mape: real('mape').notNull(), // Средняя MAPE
+  mae: real('mae').notNull(), // Средняя MAE
+  rmse: real('rmse').notNull(), // Средняя RMSE
+  sampleSize: integer('sample_size').notNull(), // Количество прогнозов в выборке
+  lastUpdated: timestamp('last_updated').defaultNow().notNull(),
+});
+
+export const insertModelAccuracyMetricSchema = createInsertSchema(modelAccuracyMetrics).omit({
+  id: true,
+  lastUpdated: true,
+});
+
+export type InsertModelAccuracyMetric = z.infer<typeof insertModelAccuracyMetricSchema>;
+export type ModelAccuracyMetric = typeof modelAccuracyMetrics.$inferSelect;

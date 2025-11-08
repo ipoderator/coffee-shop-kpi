@@ -57,19 +57,36 @@ interface EnhancedWeeklyForecastCardProps {
   forecast: RevenueForecast;
 }
 
+interface Insight {
+  type: string;
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  impact: 'positive' | 'negative' | 'warning' | 'neutral';
+  recommendation: string;
+}
+
 export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastCardProps) {
   const { nextMonth, methodology } = forecast;
   const [activeTab, setActiveTab] = useState<'forecast' | 'analytics' | 'insights'>('forecast');
   const [selectedWeek, setSelectedWeek] = useState(0);
+  
+  // Получаем метрики качества моделей из methodology, если доступны
+  const backendModelQuality = methodology.modelQualityMetrics || {};
+  
+  // Получаем статус LLM из methodology, если доступен
+  const llmStatus = (methodology as any).llmStatus || { enabled: false, available: false };
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('ru-RU', {
+  // Мемоизируем форматтер валюты для оптимизации
+  const formatCurrency = useMemo(() => {
+    const formatter = new Intl.NumberFormat('ru-RU', {
       style: 'currency',
       currency: 'RUB',
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
-    }).format(amount);
-  };
+    });
+    return (amount: number) => formatter.format(amount);
+  }, []);
 
   // Группируем прогноз по неделям
   const weeklyForecasts = useMemo(() => {
@@ -124,10 +141,30 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
         dayData.reduce((sum, day) => sum + day.predictedRevenue, 0) / dayData.length;
       const avgConfidence = dayData.reduce((sum, day) => sum + day.confidence, 0) / dayData.length;
 
-      // Находим ближайшую дату для этого дня недели
-      const nearestDate = dayData.length > 0 
-        ? dayData[0].date // Берем первую дату из прогноза для этого дня недели
-        : null;
+      // Находим ближайшие даты для этого дня недели (первые 2-3)
+      const sortedDates = dayData
+        .map((day) => new Date(day.date))
+        .sort((a, b) => a.getTime() - b.getTime())
+        .slice(0, 3); // Берем первые 3 даты
+
+      // Форматируем даты в формат ДД.ММ
+      const formattedDates = sortedDates.map((date) => {
+        const day = date.getDate().toString().padStart(2, '0');
+        const month = (date.getMonth() + 1).toString().padStart(2, '0');
+        return `${day}.${month}`;
+      });
+
+      // Вычисляем статистику
+      const revenues = dayData.map((day) => day.predictedRevenue);
+      const minRevenue = revenues.length > 0 ? Math.min(...revenues) : 0;
+      const maxRevenue = revenues.length > 0 ? Math.max(...revenues) : 0;
+      const sortedRevenues = [...revenues].sort((a, b) => a - b);
+      const medianRevenue =
+        sortedRevenues.length > 0
+          ? sortedRevenues.length % 2 === 0
+            ? (sortedRevenues[sortedRevenues.length / 2 - 1] + sortedRevenues[sortedRevenues.length / 2]) / 2
+            : sortedRevenues[Math.floor(sortedRevenues.length / 2)]
+          : 0;
 
       return {
         dayIndex,
@@ -135,8 +172,10 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
         avgRevenue,
         avgConfidence,
         count: dayData.length,
-        nearestDate, // Ближайшая дата для этого дня недели
-        dates: dayData.map(d => d.date), // Все даты для этого дня недели
+        dates: formattedDates, // Ближайшие даты
+        minRevenue,
+        maxRevenue,
+        medianRevenue,
       };
     });
 
@@ -160,71 +199,48 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
         }, 0) / allDays.length,
     };
 
-    // Анализ трендов с ML (правильный расчет тренда в день)
+    // Анализ трендов с ML
     const revenueTrend = allDays.map((day) => day.predictedRevenue);
-    let trendSlope = 0;
-    if (revenueTrend.length > 1) {
-      // Используем линейную регрессию для расчета тренда
-      const n = revenueTrend.length;
-      const x = Array.from({ length: n }, (_, i) => i);
-      const sumX = x.reduce((sum, val) => sum + val, 0);
-      const sumY = revenueTrend.reduce((sum, val) => sum + val, 0);
-      const sumXY = x.reduce((sum, val, i) => sum + val * revenueTrend[i], 0);
-      const sumXX = x.reduce((sum, val) => sum + val * val, 0);
-      const denominator = n * sumXX - sumX * sumX;
-      
-      // Абсолютный тренд (изменение выручки в день)
-      const absoluteTrend = denominator !== 0 ? (n * sumXY - sumX * sumY) / denominator : 0;
-      
-      // Средняя выручка для нормализации
-      const avgRevenue = sumY / n;
-      
-      // Процентное изменение тренда в день (относительно средней выручки)
-      trendSlope = avgRevenue > 0 ? (absoluteTrend / avgRevenue) * 100 : 0;
-      
-      // Ограничиваем разумными пределами (не более ±50% в день)
-      trendSlope = Math.max(-50, Math.min(50, trendSlope));
-    }
+    // Исправленная формула тренда: процентное изменение в день
+    const trendSlope =
+      revenueTrend.length > 1 && revenueTrend[0] > 0
+        ? ((revenueTrend[revenueTrend.length - 1] - revenueTrend[0]) / revenueTrend[0]) / revenueTrend.length
+        : 0;
 
     // Анализ волатильности
     const avgRevenue = revenueTrend.reduce((sum, rev) => sum + rev, 0) / revenueTrend.length;
     const variance =
       revenueTrend.reduce((sum, rev) => sum + Math.pow(rev - avgRevenue, 2), 0) /
       revenueTrend.length;
-    const volatility = Math.sqrt(variance) / avgRevenue;
+    const volatility = avgRevenue > 0 ? Math.sqrt(variance) / avgRevenue : 0;
 
-    // Анализ качества ML моделей (на основе согласованности прогнозов)
+    // Анализ качества ML моделей - используем метрики из бэкенда, если доступны
+    // Если метрики из бэкенда недоступны, используем fallback расчет на основе факторов
     const mlModelQuality = {
-      arima: (() => {
-        // Качество ARIMA оцениваем через стабильность прогнозов
-        const predictions = allDays.map(d => d.predictedRevenue);
-        if (predictions.length === 0) return 0;
-        const mean = predictions.reduce((sum, val) => sum + val, 0) / predictions.length;
-        if (mean === 0) return 0;
-        const variance = predictions.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / predictions.length;
-        const cv = Math.sqrt(variance) / mean;
-        // Низкая вариация = хорошее качество (но не слишком низкая, чтобы не было одинаковых прогнозов)
-        // Нормализуем: cv от 0 до 0.5 дает качество от 1 до 0
-        return Math.max(0, Math.min(1, 1 - cv * 2));
+      arima: backendModelQuality.arima ?? (() => {
+        const arimaFactors = allDays.map((day) => day.factors?.historicalPattern || 0);
+        return arimaFactors.length > 0
+          ? Math.max(0, Math.min(1, (arimaFactors.reduce((sum, f) => sum + Math.abs(f), 0) / arimaFactors.length) * 2))
+          : 0.5;
       })(),
-      prophet: (() => {
-        // Качество Prophet оцениваем через корреляцию с сезонностью
-        const dayOfWeekRevenues = dayOfWeekAnalysis.map(d => d.avgRevenue);
-        if (dayOfWeekRevenues.length === 0) return 0;
-        const maxRevenue = Math.max(...dayOfWeekRevenues);
-        const minRevenue = Math.min(...dayOfWeekRevenues);
-        const hasSeasonality = minRevenue > 0 && maxRevenue / minRevenue > 1.1;
-        // Если есть выраженная сезонность, качество выше (Prophet хорош для сезонности)
-        const seasonalityStrength = minRevenue > 0 ? Math.min(1, (maxRevenue / minRevenue - 1) / 0.5) : 0;
-        return hasSeasonality ? 0.7 + seasonalityStrength * 0.3 : 0.5;
+      prophet: backendModelQuality.prophet ?? (() => {
+        const prophetFactors = allDays.map((day) => day.factors?.seasonality || 1);
+        const prophetAvg = prophetFactors.reduce((sum, f) => sum + f, 0) / prophetFactors.length;
+        return Math.max(0, Math.min(1, 1 - Math.abs(prophetAvg - 1) * 2)); // Чем ближе к 1, тем лучше
       })(),
-      lstm: (() => {
-        // Качество LSTM оцениваем через способность учитывать тренды
-        const trendStrength = Math.abs(trendSlope);
-        // Если есть тренд, качество выше (LSTM хорош для трендов)
-        const normalizedTrend = Math.min(1, trendStrength / 5); // Нормализуем до 5% в день
-        return 0.4 + normalizedTrend * 0.4;
+      lstm: backendModelQuality.lstm ?? (() => {
+        const lstmFactors = allDays.map((day) => day.factors?.trend || 0);
+        return lstmFactors.length > 0
+          ? Math.max(0, Math.min(1, 0.5 + Math.abs(lstmFactors.reduce((sum, f) => sum + f, 0) / lstmFactors.length) * 0.5))
+          : 0.5;
       })(),
+      gru: backendModelQuality.gru ?? (() => {
+        // GRU лучше работает с сезонностью, используем сезонность как индикатор
+        const gruFactors = allDays.map((day) => day.factors?.seasonality || 1);
+        const gruAvg = gruFactors.reduce((sum, f) => sum + f, 0) / gruFactors.length;
+        return Math.max(0, Math.min(1, 0.5 + (1 - Math.abs(gruAvg - 1)) * 0.5));
+      })(),
+      llm: backendModelQuality.llm ?? 0, // Используем метрики из бэкенда для LLM
     };
 
     return {
@@ -240,77 +256,147 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
 
   // Генерация инсайтов
   const insights = useMemo(() => {
-    const insightsList = [];
+    const insightsList: Insight[] = [];
+
+    // Проверка наличия данных
+    if (!deepAnalytics || !deepAnalytics.dayOfWeekAnalysis || deepAnalytics.dayOfWeekAnalysis.length === 0) {
+      return insightsList;
+    }
 
     // Инсайт по дням недели
-    const bestDay = deepAnalytics.dayOfWeekAnalysis.reduce((best, day) =>
-      day.avgRevenue > best.avgRevenue ? day : best,
-    );
-    const worstDay = deepAnalytics.dayOfWeekAnalysis.reduce((worst, day) =>
-      day.avgRevenue < worst.avgRevenue ? day : worst,
+    const validDays = deepAnalytics.dayOfWeekAnalysis.filter(day => 
+      day && typeof day.avgRevenue === 'number' && isFinite(day.avgRevenue)
     );
 
-    insightsList.push({
-      type: 'performance',
-      icon: <Target className="h-4 w-4" />,
-      title: 'Лучший день недели',
-      description: `${bestDay.dayName} показывает среднюю выручку ${formatCurrency(bestDay.avgRevenue)}`,
-      impact: 'positive',
-      recommendation: `Сосредоточьтесь на максимизации продаж в ${bestDay.dayName}`,
-    });
+    if (validDays.length > 0) {
+      const bestDay = validDays.reduce((best, day) =>
+        day.avgRevenue > best.avgRevenue ? day : best,
+        validDays[0]
+      );
+      const worstDay = validDays.reduce((worst, day) =>
+        day.avgRevenue < worst.avgRevenue ? day : worst,
+        validDays[0]
+      );
+
+      if (bestDay && worstDay) {
+        insightsList.push({
+          type: 'performance',
+          icon: <Target className="h-4 w-4" />,
+          title: 'Лучший день недели',
+          description: `${bestDay.dayName} показывает среднюю выручку ${formatCurrency(bestDay.avgRevenue)}`,
+          impact: 'positive',
+          recommendation: `Сосредоточьтесь на максимизации продаж в ${bestDay.dayName}`,
+        });
+
+        // Добавляем инсайт о худшем дне, если разница значительна
+        if (bestDay.avgRevenue > worstDay.avgRevenue * 1.2) {
+          insightsList.push({
+            type: 'performance',
+            icon: <AlertTriangle className="h-4 w-4" />,
+            title: 'День с низкой выручкой',
+            description: `${worstDay.dayName} показывает среднюю выручку ${formatCurrency(worstDay.avgRevenue)}`,
+            impact: 'warning',
+            recommendation: `Рассмотрите специальные акции или мероприятия для ${worstDay.dayName}`,
+          });
+        }
+      }
+    }
 
     // Инсайт по трендам
-    if (deepAnalytics.trendSlope > 0.1) {
-      insightsList.push({
-        type: 'trend',
-        icon: <TrendingUp className="h-4 w-4" />,
-        title: 'Положительный тренд',
-        description: `Выручка растет на ${deepAnalytics.trendSlope.toFixed(1)}% в день`,
-        impact: 'positive',
-        recommendation: 'Поддерживайте текущую стратегию развития',
-      });
-    } else if (deepAnalytics.trendSlope < -0.1) {
-      insightsList.push({
-        type: 'trend',
-        icon: <TrendingDown className="h-4 w-4" />,
-        title: 'Отрицательный тренд',
-        description: `Выручка снижается на ${Math.abs(deepAnalytics.trendSlope).toFixed(1)}% в день`,
-        impact: 'negative',
-        recommendation: 'Требуется корректировка стратегии',
-      });
+    if (typeof deepAnalytics.trendSlope === 'number' && isFinite(deepAnalytics.trendSlope)) {
+      if (deepAnalytics.trendSlope > 0.05) {
+        insightsList.push({
+          type: 'trend',
+          icon: <TrendingUp className="h-4 w-4" />,
+          title: 'Положительный тренд',
+          description: `Выручка растет на ${(deepAnalytics.trendSlope * 100).toFixed(1)}% в день`,
+          impact: 'positive',
+          recommendation: 'Поддерживайте текущую стратегию развития',
+        });
+      } else if (deepAnalytics.trendSlope < -0.05) {
+        insightsList.push({
+          type: 'trend',
+          icon: <TrendingDown className="h-4 w-4" />,
+          title: 'Отрицательный тренд',
+          description: `Выручка снижается на ${Math.abs(deepAnalytics.trendSlope * 100).toFixed(1)}% в день`,
+          impact: 'negative',
+          recommendation: 'Требуется корректировка стратегии',
+        });
+      }
     }
 
     // Инсайт по волатильности
-    if (deepAnalytics.volatility > 0.2) {
-      insightsList.push({
-        type: 'volatility',
-        icon: <AlertTriangle className="h-4 w-4" />,
-        title: 'Высокая волатильность',
-        description: `Колебания выручки составляют ${(deepAnalytics.volatility * 100).toFixed(1)}%`,
-        impact: 'warning',
-        recommendation: 'Рассмотрите стабилизацию продаж',
-      });
-    } else {
-      insightsList.push({
-        type: 'stability',
-        icon: <CheckCircle className="h-4 w-4" />,
-        title: 'Стабильные продажи',
-        description: `Низкая волатильность: ${(deepAnalytics.volatility * 100).toFixed(1)}%`,
-        impact: 'positive',
-        recommendation: 'Отличная стабильность бизнеса',
-      });
+    if (typeof deepAnalytics.volatility === 'number' && isFinite(deepAnalytics.volatility)) {
+      if (deepAnalytics.volatility > 0.2) {
+        insightsList.push({
+          type: 'volatility',
+          icon: <AlertTriangle className="h-4 w-4" />,
+          title: 'Высокая волатильность',
+          description: `Колебания выручки составляют ${(deepAnalytics.volatility * 100).toFixed(1)}%`,
+          impact: 'warning',
+          recommendation: 'Рассмотрите стабилизацию продаж',
+        });
+      } else {
+        insightsList.push({
+          type: 'stability',
+          icon: <CheckCircle className="h-4 w-4" />,
+          title: 'Стабильные продажи',
+          description: `Низкая волатильность: ${(deepAnalytics.volatility * 100).toFixed(1)}%`,
+          impact: 'positive',
+          recommendation: 'Отличная стабильность бизнеса',
+        });
+      }
     }
 
     // Инсайт по погодным факторам
-    if (Math.abs(deepAnalytics.correlations.weatherRevenue) > 1000) {
-      insightsList.push({
-        type: 'weather',
-        icon: <Cloud className="h-4 w-4" />,
-        title: 'Погодная зависимость',
-        description: `Погода влияет на выручку на ${Math.abs((deepAnalytics.correlations.weatherRevenue / deepAnalytics.avgRevenue) * 100).toFixed(1)}%`,
-        impact: deepAnalytics.correlations.weatherRevenue > 0 ? 'positive' : 'negative',
-        recommendation: 'Учитывайте погодные условия в планировании',
-      });
+    if (
+      deepAnalytics.correlations &&
+      typeof deepAnalytics.correlations.weatherRevenue === 'number' &&
+      isFinite(deepAnalytics.correlations.weatherRevenue) &&
+      typeof deepAnalytics.avgRevenue === 'number' &&
+      isFinite(deepAnalytics.avgRevenue) &&
+      deepAnalytics.avgRevenue > 0
+    ) {
+      const weatherImpactPercent = Math.abs(
+        (deepAnalytics.correlations.weatherRevenue / deepAnalytics.avgRevenue) * 100
+      );
+      
+      // Используем процентное влияние вместо абсолютного значения
+      if (weatherImpactPercent > 5) {
+        insightsList.push({
+          type: 'weather',
+          icon: <Cloud className="h-4 w-4" />,
+          title: 'Погодная зависимость',
+          description: `Погода влияет на выручку на ${weatherImpactPercent.toFixed(1)}%`,
+          impact: deepAnalytics.correlations.weatherRevenue > 0 ? 'positive' : 'negative',
+          recommendation: 'Учитывайте погодные условия в планировании',
+        });
+      }
+    }
+
+    // Инсайт по праздникам
+    if (
+      deepAnalytics.correlations &&
+      typeof deepAnalytics.correlations.holidayRevenue === 'number' &&
+      isFinite(deepAnalytics.correlations.holidayRevenue) &&
+      typeof deepAnalytics.avgRevenue === 'number' &&
+      isFinite(deepAnalytics.avgRevenue) &&
+      deepAnalytics.avgRevenue > 0
+    ) {
+      const holidayImpactPercent = Math.abs(
+        (deepAnalytics.correlations.holidayRevenue / deepAnalytics.avgRevenue) * 100
+      );
+      
+      if (holidayImpactPercent > 10) {
+        insightsList.push({
+          type: 'holiday',
+          icon: <Gift className="h-4 w-4" />,
+          title: 'Влияние праздников',
+          description: `Праздники влияют на выручку на ${holidayImpactPercent.toFixed(1)}%`,
+          impact: deepAnalytics.correlations.holidayRevenue > 0 ? 'positive' : 'negative',
+          recommendation: 'Планируйте специальные акции и увеличение запасов в праздничные дни',
+        });
+      }
     }
 
     return insightsList;
@@ -353,68 +439,98 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
     };
   }, [weeklyForecasts, selectedWeek]);
 
-  const chartOptions: ChartOptions<'line'> = {
-    responsive: true,
-    maintainAspectRatio: false,
-    interaction: {
-      mode: 'index',
-      intersect: false,
-    },
-    plugins: {
-      legend: {
-        display: true,
-        position: 'top',
+  const chartOptions: ChartOptions<'line'> = useMemo(() => {
+    const selectedWeekData = weeklyForecasts[selectedWeek];
+    if (!selectedWeekData) {
+      return {} as ChartOptions<'line'>;
+    }
+
+    // Вычисляем диапазоны для правильной настройки осей
+    const revenueData = selectedWeekData.days.map((day) => day.predictedRevenue ?? 0);
+    const confidenceData = selectedWeekData.days.map((day) => (day.confidence ?? 0) * 100);
+    
+    const minRevenue = Math.min(...revenueData);
+    const maxRevenue = Math.max(...revenueData);
+    const revenueRange = maxRevenue - minRevenue;
+    const revenuePadding = revenueRange * 0.1; // 10% padding
+
+    const minConfidence = Math.min(...confidenceData);
+    const maxConfidence = Math.max(...confidenceData);
+    const confidenceRange = maxConfidence - minConfidence;
+    const confidencePadding = confidenceRange * 0.1; // 10% padding
+
+    return {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: {
+        mode: 'index',
+        intersect: false,
       },
-      tooltip: {
-        callbacks: {
-          label: function (context) {
-            const value = context.parsed?.y;
-            if (value == null) {
-              return '';
-            }
-            if (context.datasetIndex === 0) {
-              return `Выручка: ${formatCurrency(value)}`;
-            }
-            return `Уверенность: ${value.toFixed(1)}%`;
+      plugins: {
+        legend: {
+          display: true,
+          position: 'top',
+        },
+        tooltip: {
+          callbacks: {
+            label: function (context) {
+              const value = context.parsed?.y;
+              if (value == null) {
+                return '';
+              }
+              if (context.datasetIndex === 0) {
+                return `Выручка: ${formatCurrency(value)}`;
+              }
+              return `Уверенность: ${value.toFixed(1)}%`;
+            },
           },
         },
       },
-    },
-    scales: {
-      y: {
-        type: 'linear',
-        display: true,
-        position: 'left',
-        title: {
+      scales: {
+        y: {
+          type: 'linear',
           display: true,
-          text: 'Выручка (₽)',
+          position: 'left',
+          title: {
+            display: true,
+            text: 'Выручка (₽)',
+          },
+          min: Math.max(0, minRevenue - revenuePadding),
+          max: maxRevenue + revenuePadding,
+          ticks: {
+            callback: function (value) {
+              return formatCurrency(Number(value));
+          },
+          },
         },
-        ticks: {
-          callback: function (value) {
-            return formatCurrency(Number(value));
+        y1: {
+          type: 'linear',
+          display: true,
+          position: 'right',
+          title: {
+            display: true,
+            text: 'Уверенность (%)',
+          },
+          min: Math.max(0, minConfidence - confidencePadding),
+          max: Math.min(100, maxConfidence + confidencePadding),
+          ticks: {
+            callback: function (value) {
+              return `${Number(value).toFixed(0)}%`;
+            },
+          },
+          grid: {
+            drawOnChartArea: false,
+          },
+        },
+        x: {
+          title: {
+            display: true,
+            text: 'Дни недели',
           },
         },
       },
-      y1: {
-        type: 'linear',
-        display: true,
-        position: 'right',
-        title: {
-          display: true,
-          text: 'Уверенность (%)',
-        },
-        grid: {
-          drawOnChartArea: false,
-        },
-      },
-      x: {
-        title: {
-          display: true,
-          text: 'Дни недели',
-        },
-      },
-    },
-  };
+    };
+  }, [weeklyForecasts, selectedWeek, formatCurrency]);
 
   return (
     <Card className="w-full">
@@ -549,34 +665,66 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
               <h3 className="text-lg font-semibold mb-4">Анализ по дням недели</h3>
               <div className="grid grid-cols-1 md:grid-cols-7 gap-3">
                 {deepAnalytics.dayOfWeekAnalysis.map((day) => {
-                  // Форматируем дату для отображения
-                  const formatDate = (dateStr: string | null) => {
-                    if (!dateStr) return '';
-                    const date = new Date(dateStr);
-                    return date.toLocaleDateString('ru-RU', { 
-                      day: '2-digit', 
-                      month: '2-digit' 
-                    });
-                  };
-
-                  // Показываем ближайшую дату или диапазон дат
-                  const dateDisplay = day.nearestDate 
-                    ? formatDate(day.nearestDate)
-                    : day.dates && day.dates.length > 0
-                      ? `${formatDate(day.dates[0])}${day.dates.length > 1 ? ` - ${formatDate(day.dates[day.dates.length - 1])}` : ''}`
-                      : '';
-
+                  // Определяем лучший и худший день для цветовой индикации
+                  const allRevenues = deepAnalytics.dayOfWeekAnalysis.map((d) => d.avgRevenue);
+                  const maxRevenue = Math.max(...allRevenues);
+                  const minRevenue = Math.min(...allRevenues);
+                  const isBestDay = day.avgRevenue === maxRevenue;
+                  const isWorstDay = day.avgRevenue === minRevenue;
+                  
                   return (
-                    <Card key={day.dayIndex} className="p-3 text-center">
+                    <Card
+                      key={day.dayIndex}
+                      className={`p-3 text-center transition-all duration-200 hover:shadow-lg cursor-pointer ${
+                        isBestDay
+                          ? 'bg-green-50 border-green-200 border-2'
+                          : isWorstDay
+                            ? 'bg-red-50 border-red-200 border-2'
+                            : 'hover:bg-gray-50'
+                      }`}
+                    >
                       <div className="font-bold text-sm mb-1">{day.dayName}</div>
-                      {dateDisplay && (
-                        <div className="text-xs text-gray-400 mb-1">{dateDisplay}</div>
+                      
+                      {/* Даты под названием дня */}
+                      {day.dates && day.dates.length > 0 && (
+                        <div className="text-xs text-gray-400 mb-2 space-y-0.5">
+                          {day.dates.map((date, idx) => (
+                            <div key={idx}>{date}</div>
+                          ))}
+                        </div>
                       )}
-                      <div className="text-lg font-bold text-blue-600">
+                      
+                      <div
+                        className={`text-lg font-bold mb-1 ${
+                          isBestDay ? 'text-green-600' : isWorstDay ? 'text-red-600' : 'text-blue-600'
+                        }`}
+                      >
                         {formatCurrency(day.avgRevenue)}
                       </div>
+                      
+                      {/* Прогресс-бар для уверенности */}
+                      <div className="mb-1">
+                        <div className="w-full bg-gray-200 rounded-full h-1.5">
+                          <div
+                            className={`h-1.5 rounded-full ${
+                              day.avgConfidence >= 0.7
+                                ? 'bg-green-500'
+                                : day.avgConfidence >= 0.5
+                                  ? 'bg-yellow-500'
+                                  : 'bg-red-500'
+                            }`}
+                            style={{ width: `${Math.round(day.avgConfidence * 100)}%` }}
+                          />
+                        </div>
+                      </div>
+                      
                       <div className="text-xs text-gray-500">
                         {Math.round(day.avgConfidence * 100)}% уверенность
+                      </div>
+                      
+                      {/* Дополнительная статистика при hover */}
+                      <div className="text-xs text-gray-400 mt-1">
+                        {day.count} {day.count === 1 ? 'день' : day.count < 5 ? 'дня' : 'дней'}
                       </div>
                     </Card>
                   );
@@ -588,121 +736,238 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
             <div>
               <h3 className="text-lg font-semibold mb-4">Корреляции факторов</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <Card className="p-4">
-                  <div className="flex items-center gap-3 mb-2">
-                    <Cloud className="h-5 w-5 text-blue-500" />
-                    <span className="font-semibold">Погода</span>
-                  </div>
-                  <div className="text-sm text-gray-600">
-                    Влияние:{' '}
-                    {(() => {
-                      // Рассчитываем среднее влияние погоды на прогноз
-                      const allDays = nextMonth.dailyForecast;
-                      const weatherImpacts = allDays
-                        .filter(d => d.weatherImpact !== undefined && d.weatherImpact !== null)
-                        .map(d => Math.abs(d.weatherImpact || 0));
-                      const avgWeatherImpact = weatherImpacts.length > 0
-                        ? weatherImpacts.reduce((sum, val) => sum + val, 0) / weatherImpacts.length
-                        : 0;
-                      return (avgWeatherImpact * 100).toFixed(1);
-                    })()}
-                    %
-                  </div>
-                </Card>
-                <Card className="p-4">
-                  <div className="flex items-center gap-3 mb-2">
-                    <Gift className="h-5 w-5 text-yellow-500" />
-                    <span className="font-semibold">Праздники</span>
-                  </div>
-                  <div className="text-sm text-gray-600">
-                    Влияние:{' '}
-                    {(() => {
-                      // Рассчитываем среднее влияние праздников на прогноз
-                      const allDays = nextMonth.dailyForecast;
-                      const holidayImpacts = allDays
-                        .filter(d => d.holidayImpact !== undefined && d.holidayImpact !== null)
-                        .map(d => Math.abs(d.holidayImpact || 0));
-                      const avgHolidayImpact = holidayImpacts.length > 0
-                        ? holidayImpacts.reduce((sum, val) => sum + val, 0) / holidayImpacts.length
-                        : 0;
-                      return (avgHolidayImpact * 100).toFixed(1);
-                    })()}
-                    %
-                  </div>
-                </Card>
-                <Card className="p-4">
-                  <div className="flex items-center gap-3 mb-2">
-                    <Sun className="h-5 w-5 text-orange-500" />
-                    <span className="font-semibold">Сезонность</span>
-                  </div>
-                  <div className="text-sm text-gray-600">
-                    Влияние:{' '}
-                    {(() => {
-                      // Рассчитываем влияние сезонности через разброс выручки по дням недели
-                      const dayOfWeekRevenues = deepAnalytics.dayOfWeekAnalysis.map(d => d.avgRevenue);
-                      const maxRevenue = Math.max(...dayOfWeekRevenues);
-                      const minRevenue = Math.min(...dayOfWeekRevenues);
-                      const avgRevenue = dayOfWeekRevenues.reduce((sum, rev) => sum + rev, 0) / dayOfWeekRevenues.length;
-                      const seasonalityImpact = avgRevenue > 0
-                        ? ((maxRevenue - minRevenue) / avgRevenue) * 0.5 // 50% от разброса
-                        : 0;
-                      return (Math.min(100, seasonalityImpact * 100)).toFixed(1);
-                    })()}
-                    %
-                  </div>
-                </Card>
-                <Card className="p-4">
-                  <div className="flex items-center gap-3 mb-2">
-                    <TrendingUp className="h-5 w-5 text-green-500" />
-                    <span className="font-semibold">Тренд</span>
-                  </div>
-                  <div className="text-sm text-gray-600">
-                    Влияние:{' '}
-                    {(() => {
-                      // Используем расчетный тренд в день
-                      const trendImpact = Math.abs(deepAnalytics.trendSlope) > 0.1 ? Math.min(20, Math.abs(deepAnalytics.trendSlope) * 2) : 0;
-                      return trendImpact.toFixed(1);
-                    })()}
-                    %
-                  </div>
-                </Card>
+                {(() => {
+                  const avgRev = deepAnalytics.avgRevenue;
+                  const weatherPercent =
+                    avgRev && isFinite(avgRev) && avgRev > 0
+                      ? Math.abs((deepAnalytics.correlations.weatherRevenue / avgRev) * 100)
+                      : 0;
+                  const weatherAmount = Math.abs(deepAnalytics.correlations.weatherRevenue);
+                  const weatherNormalized = Math.min(weatherPercent / 100, 1); // Нормализуем до 0-1 для прогресс-бара
+
+                  const holidayPercent =
+                    avgRev && isFinite(avgRev) && avgRev > 0
+                      ? Math.abs((deepAnalytics.correlations.holidayRevenue / avgRev) * 100)
+                      : 0;
+                  const holidayAmount = Math.abs(deepAnalytics.correlations.holidayRevenue);
+                  const holidayNormalized = Math.min(holidayPercent / 100, 1);
+
+                  const seasonalPercent =
+                    avgRev && isFinite(avgRev) && avgRev > 0
+                      ? Math.abs((deepAnalytics.correlations.seasonalRevenue / avgRev) * 100)
+                      : 0;
+                  const seasonalAmount = Math.abs(deepAnalytics.correlations.seasonalRevenue);
+                  const seasonalNormalized = Math.min(seasonalPercent / 100, 1);
+
+                  const trendPercent =
+                    typeof deepAnalytics.trendSlope === 'number' && isFinite(deepAnalytics.trendSlope)
+                      ? Math.abs(deepAnalytics.trendSlope * 100)
+                      : 0;
+                  const trendNormalized = Math.min(trendPercent / 10, 1); // Нормализуем тренд
+
+                  return (
+                    <>
+                      <Card className="p-4 hover:shadow-md transition-shadow">
+                        <div className="flex items-center gap-3 mb-3">
+                          <Cloud className="h-5 w-5 text-blue-500" />
+                          <span className="font-semibold">Погода</span>
+                        </div>
+                        <div className="space-y-2">
+                          <div className="text-sm font-medium text-gray-700">
+                            Влияние: {weatherPercent.toFixed(1)}%
+                          </div>
+                          <div className="w-full bg-gray-200 rounded-full h-2">
+                            <div
+                              className="bg-blue-500 h-2 rounded-full transition-all"
+                              style={{ width: `${weatherNormalized * 100}%` }}
+                            />
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {formatCurrency(weatherAmount)} в день
+                          </div>
+                        </div>
+                      </Card>
+                      <Card className="p-4 hover:shadow-md transition-shadow">
+                        <div className="flex items-center gap-3 mb-3">
+                          <Gift className="h-5 w-5 text-yellow-500" />
+                          <span className="font-semibold">Праздники</span>
+                        </div>
+                        <div className="space-y-2">
+                          <div className="text-sm font-medium text-gray-700">
+                            Влияние: {holidayPercent.toFixed(1)}%
+                          </div>
+                          <div className="w-full bg-gray-200 rounded-full h-2">
+                            <div
+                              className="bg-yellow-500 h-2 rounded-full transition-all"
+                              style={{ width: `${holidayNormalized * 100}%` }}
+                            />
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {formatCurrency(holidayAmount)} в день
+                          </div>
+                        </div>
+                      </Card>
+                      <Card className="p-4 hover:shadow-md transition-shadow">
+                        <div className="flex items-center gap-3 mb-3">
+                          <Sun className="h-5 w-5 text-orange-500" />
+                          <span className="font-semibold">Сезонность</span>
+                        </div>
+                        <div className="space-y-2">
+                          <div className="text-sm font-medium text-gray-700">
+                            Влияние: {seasonalPercent.toFixed(1)}%
+                          </div>
+                          <div className="w-full bg-gray-200 rounded-full h-2">
+                            <div
+                              className="bg-orange-500 h-2 rounded-full transition-all"
+                              style={{ width: `${seasonalNormalized * 100}%` }}
+                            />
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {formatCurrency(seasonalAmount)} в день
+                          </div>
+                        </div>
+                      </Card>
+                      <Card className="p-4 hover:shadow-md transition-shadow">
+                        <div className="flex items-center gap-3 mb-3">
+                          <TrendingUp className="h-5 w-5 text-green-500" />
+                          <span className="font-semibold">Тренд</span>
+                        </div>
+                        <div className="space-y-2">
+                          <div className="text-sm font-medium text-gray-700">
+                            Влияние:{' '}
+                            {typeof deepAnalytics.trendSlope === 'number' &&
+                            isFinite(deepAnalytics.trendSlope)
+                              ? `${deepAnalytics.trendSlope > 0 ? '+' : ''}${(deepAnalytics.trendSlope * 100).toFixed(1)}%`
+                              : '0.0%'}
+                          </div>
+                          <div className="w-full bg-gray-200 rounded-full h-2">
+                            <div
+                              className={`h-2 rounded-full transition-all ${
+                                deepAnalytics.trendSlope > 0 ? 'bg-green-500' : 'bg-red-500'
+                              }`}
+                              style={{ width: `${trendNormalized * 100}%` }}
+                            />
+                          </div>
+                          <div className="text-xs text-gray-500">в день</div>
+                        </div>
+                      </Card>
+                    </>
+                  );
+                })()}
               </div>
             </div>
 
             {/* ML Модели */}
             <div>
               <h3 className="text-lg font-semibold mb-4">Качество ML моделей</h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Card className="p-4">
-                  <div className="flex items-center gap-3 mb-2">
-                    <BarChart3 className="h-5 w-5 text-purple-500" />
-                    <span className="font-semibold">ARIMA</span>
-                  </div>
-                  <div className="text-sm text-gray-600">
-                    Качество: {(Math.abs(deepAnalytics.mlModelQuality.arima) * 100).toFixed(1)}%
-                  </div>
-                  <div className="text-xs text-gray-500 mt-1">Временные ряды</div>
-                </Card>
-                <Card className="p-4">
-                  <div className="flex items-center gap-3 mb-2">
-                    <Calendar className="h-5 w-5 text-blue-500" />
-                    <span className="font-semibold">Prophet</span>
-                  </div>
-                  <div className="text-sm text-gray-600">
-                    Качество: {(Math.abs(deepAnalytics.mlModelQuality.prophet) * 100).toFixed(1)}%
-                  </div>
-                  <div className="text-xs text-gray-500 mt-1">Сезонность</div>
-                </Card>
-                <Card className="p-4">
-                  <div className="flex items-center gap-3 mb-2">
-                    <Brain className="h-5 w-5 text-green-500" />
-                    <span className="font-semibold">LSTM</span>
-                  </div>
-                  <div className="text-sm text-gray-600">
-                    Качество: {(Math.abs(deepAnalytics.mlModelQuality.lstm) * 100).toFixed(1)}%
-                  </div>
-                  <div className="text-xs text-gray-500 mt-1">Нейросеть</div>
-                </Card>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {[
+                  {
+                    name: 'ARIMA',
+                    quality: Math.abs(deepAnalytics.mlModelQuality.arima),
+                    icon: <BarChart3 className="h-5 w-5 text-purple-500" />,
+                    description: 'Временные ряды',
+                    color: 'purple',
+                  },
+                  {
+                    name: 'Prophet',
+                    quality: Math.abs(deepAnalytics.mlModelQuality.prophet),
+                    icon: <Calendar className="h-5 w-5 text-blue-500" />,
+                    description: 'Сезонность',
+                    color: 'blue',
+                  },
+                  {
+                    name: 'LSTM',
+                    quality: Math.abs(deepAnalytics.mlModelQuality.lstm),
+                    icon: <Brain className="h-5 w-5 text-green-500" />,
+                    description: 'Нейросеть',
+                    color: 'green',
+                  },
+                  {
+                    name: 'GRU',
+                    quality: Math.abs(deepAnalytics.mlModelQuality.gru ?? 0.5),
+                    icon: <Zap className="h-5 w-5 text-orange-500" />,
+                    description: 'Рекуррентная сеть',
+                    color: 'orange',
+                  },
+                  {
+                    name: 'LLM',
+                    quality: Math.abs(deepAnalytics.mlModelQuality.llm ?? 0),
+                    icon: <Brain className="h-5 w-5 text-indigo-500" />,
+                    description: llmStatus.enabled 
+                      ? (llmStatus.available ? 'LLM модель' : 'Недоступна')
+                      : 'Отключена',
+                    color: 'indigo',
+                    isLLM: true,
+                    llmStatus,
+                  },
+                ].map((model) => {
+                  const qualityPercent = model.quality * 100;
+                  const colorClasses = {
+                    purple: 'bg-purple-500',
+                    blue: 'bg-blue-500',
+                    green: 'bg-green-500',
+                    orange: 'bg-orange-500',
+                    indigo: 'bg-indigo-500',
+                  };
+                  
+                  // Для LLM показываем дополнительную информацию
+                  const isLLM = (model as any).isLLM;
+                  const llmStatusInfo = (model as any).llmStatus;
+
+                  return (
+                    <Card key={model.name} className={`p-4 hover:shadow-md transition-shadow ${
+                      isLLM && !llmStatusInfo?.available ? 'opacity-60' : ''
+                    }`}>
+                      <div className="flex items-center gap-3 mb-3">
+                        {model.icon}
+                        <span className="font-semibold">{model.name}</span>
+                        {isLLM && llmStatusInfo?.metrics && (
+                          <Badge variant={llmStatusInfo.available ? 'default' : 'secondary'} className="ml-auto text-xs">
+                            {llmStatusInfo.metrics.totalRequests > 0 
+                              ? `${llmStatusInfo.metrics.successfulRequests}/${llmStatusInfo.metrics.totalRequests}`
+                              : '0 запросов'}
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium text-gray-700">Качество</span>
+                          <span className="text-sm font-bold text-gray-900">
+                            {qualityPercent.toFixed(1)}%
+                          </span>
+                        </div>
+                        <div className="w-full bg-gray-200 rounded-full h-2.5">
+                          <div
+                            className={`${colorClasses[model.color as keyof typeof colorClasses]} h-2.5 rounded-full transition-all`}
+                            style={{ width: `${Math.max(0, Math.min(100, qualityPercent))}%` }}
+                          />
+                        </div>
+                        <div className="text-xs text-gray-500 mt-1">{model.description}</div>
+                        {isLLM && llmStatusInfo?.metrics && (
+                          <div className="text-xs text-gray-400 space-y-0.5">
+                            <div>Запросов: {llmStatusInfo.metrics.totalRequests}</div>
+                            <div>Успешно: {llmStatusInfo.metrics.successfulRequests}</div>
+                            {llmStatusInfo.metrics.averageResponseTime > 0 && (
+                              <div>Ср. время: {Math.round(llmStatusInfo.metrics.averageResponseTime)}ms</div>
+                            )}
+                          </div>
+                        )}
+                        {!isLLM && (
+                          <div className="text-xs text-gray-400 mt-1">
+                            {qualityPercent >= 70
+                              ? 'Отличное качество'
+                              : qualityPercent >= 50
+                                ? 'Хорошее качество'
+                                : qualityPercent >= 30
+                                  ? 'Среднее качество'
+                                  : 'Требует улучшения'}
+                          </div>
+                        )}
+                      </div>
+                    </Card>
+                  );
+                })}
               </div>
             </div>
 
@@ -712,7 +977,9 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <Card className="p-4 text-center">
                   <div className="text-2xl font-bold text-green-600">
-                    {deepAnalytics.trendSlope.toFixed(1)}%
+                    {deepAnalytics.trendSlope !== 0 && isFinite(deepAnalytics.trendSlope)
+                      ? (deepAnalytics.trendSlope * 100).toFixed(2)
+                      : '0.00'}%
                   </div>
                   <div className="text-sm text-gray-600">Тренд в день</div>
                 </Card>
@@ -736,8 +1003,19 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
           <div className="space-y-6">
             <h3 className="text-lg font-semibold">Персонализированные инсайты</h3>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {insights.map((insight, index) => (
+            {insights.length === 0 ? (
+              <Card className="p-8 text-center">
+                <div className="flex flex-col items-center gap-3">
+                  <Brain className="h-12 w-12 text-gray-400" />
+                  <p className="text-gray-600">Недостаточно данных для генерации инсайтов</p>
+                  <p className="text-sm text-gray-500">
+                    Загрузите больше данных для получения персонализированных рекомендаций
+                  </p>
+                </div>
+              </Card>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {insights.map((insight, index) => (
                 <Card
                   key={index}
                   className={`p-4 ${
@@ -774,7 +1052,8 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
                   </div>
                 </Card>
               ))}
-            </div>
+              </div>
+            )}
 
             {/* Рекомендации по действиям */}
             <Card className="p-4 bg-gradient-to-r from-blue-50 to-purple-50 border-blue-200">

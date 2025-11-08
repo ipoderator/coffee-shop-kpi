@@ -24,7 +24,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type {
   Transaction,
-  ProfitabilityRecord,
   AnalyticsResponse,
   KPIMetrics,
   PeriodData,
@@ -40,12 +39,16 @@ import type {
   HolidayData,
   TrafficData,
   SocialSentiment,
+  MLAnalysis,
+  MLAnomaly,
+  MLModelMetrics,
 } from '@shared/schema';
 import { SimpleMLForecastingEngine } from './simpleMLForecasting';
 import { EnhancedMLForecastingEngine } from './enhancedMLForecasting';
 import { ExternalDataService } from './externalDataSources';
 import { AdvancedAnalyticsEngine } from './advancedAnalytics';
 import { engineerForecastFeatures } from './salesFeatures';
+import { log } from '../vite';
 
 export interface SalesModelMetadata {
   version: number;
@@ -374,7 +377,12 @@ export function forecastRevenueForTransactions(transactions: Transaction[]): num
   return predictions;
 }
 
-export async function calculateAnalytics(transactions: Transaction[]): Promise<AnalyticsResponse> {
+export async function calculateAnalytics(
+  transactions: Transaction[],
+  includeLLM: boolean = false, // По умолчанию отключаем LLM для скорости
+  storage?: any, // Хранилище для сохранения прогнозов
+  uploadId?: string, // ID загрузки данных
+): Promise<AnalyticsResponse> {
   if (transactions.length === 0) {
     return {
       kpi: {
@@ -919,7 +927,27 @@ export async function calculateAnalytics(transactions: Transaction[]): Promise<A
     dayComparison: dayComparisonData || undefined,
   };
 
-  const forecast = await generateEnhancedRevenueForecast(sorted);
+  // Создаем один экземпляр ExternalDataService и EnhancedMLForecastingEngine для переиспользования
+  const mlEngineStartTime = performance.now();
+  const externalDataService =
+    process.env.DISABLE_EXTERNAL_DATA === 'true'
+      ? undefined
+      : new ExternalDataService({
+          openWeatherApiKey: process.env.OPENWEATHER_API_KEY || '',
+          exchangeRateApiKey: process.env.EXCHANGERATE_API_KEY || '',
+          calendarificApiKey: process.env.CALENDARIFIC_API_KEY || '',
+          googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY,
+          alphaVantageApiKey: process.env.ALPHA_VANTAGE_API_KEY,
+          fredApiKey: process.env.FRED_API_KEY,
+          newsApiKey: process.env.NEWS_API_KEY,
+          twitterApiKey: process.env.TWITTER_API_KEY,
+        });
+
+  const enhancedMLEngine = new EnhancedMLForecastingEngine(sorted, externalDataService, undefined, includeLLM, storage, uploadId);
+  const mlEngineInitTime = performance.now() - mlEngineStartTime;
+  if (mlEngineInitTime > 100) {
+    log(`⏱️  Инициализация ML движка заняла ${mlEngineInitTime.toFixed(2)}ms`, 'performance');
+  }
 
   // Продвинутая аналитика
   const advancedAnalytics = new AdvancedAnalyticsEngine(sorted);
@@ -928,6 +956,17 @@ export async function calculateAnalytics(transactions: Transaction[]): Promise<A
   const anomalies = advancedAnalytics.getAnomalies();
   const trendAnalysis = advancedAnalytics.analyzeTrends();
   const marketSegments = advancedAnalytics.analyzeMarketSegments();
+
+  // ML анализ для резюме и прогноз - используем один экземпляр движка
+  const forecast = await generateEnhancedRevenueForecast(sorted, enhancedMLEngine);
+  const mlAnalysis = await generateMLAnalysis(sorted, daily, enhancedMLEngine);
+
+  // Очищаем ресурсы движка после завершения анализа
+  try {
+    enhancedMLEngine.cleanup();
+  } catch (error) {
+    console.warn('⚠️  Ошибка при очистке ML движка:', error);
+  }
 
   return {
     kpi,
@@ -945,60 +984,161 @@ export async function calculateAnalytics(transactions: Transaction[]): Promise<A
       trendAnalysis,
       marketSegments,
     },
+    mlAnalysis,
     hasCostData,
   };
+}
+
+// Генерация ML анализа для резюме
+async function generateMLAnalysis(
+  transactions: Transaction[],
+  dailyData: PeriodData[],
+  mlEngine: EnhancedMLForecastingEngine,
+): Promise<MLAnalysis | undefined> {
+  if (transactions.length < 10 || dailyData.length < 7) {
+    return undefined; // Минимум данных для анализа
+  }
+
+  try {
+    const analysisStartTime = performance.now();
+
+    // Подготавливаем данные временных рядов (используем внутренний метод через прогноз)
+    await mlEngine.generateEnhancedForecast(1); // Генерируем минимальный прогноз для подготовки данных
+
+    // Получаем метрики качества модели
+    const qualityMetrics = await mlEngine.getModelQualityMetrics();
+    
+    const analysisTime = performance.now() - analysisStartTime;
+    if (analysisTime > 500) {
+      log(`⏱️  ML анализ занял ${analysisTime.toFixed(2)}ms`, 'performance');
+    }
+    const modelQuality: MLModelMetrics = {
+      arima: qualityMetrics.arima,
+      prophet: qualityMetrics.prophet,
+      lstm: qualityMetrics.lstm,
+      linear: qualityMetrics.linear,
+      movingAverage: qualityMetrics.movingaverage,
+      overall:
+        Object.values(qualityMetrics).reduce((sum, val) => sum + (val || 0), 0) /
+        Object.keys(qualityMetrics).length,
+    };
+
+    // Анализируем дневные данные для обнаружения аномалий
+    const revenues = dailyData.map((d) => d.revenue);
+    const sortedRevenues = [...revenues].sort((a, b) => a - b);
+    const q1 = sortedRevenues[Math.floor(sortedRevenues.length * 0.25)];
+    const q3 = sortedRevenues[Math.floor(sortedRevenues.length * 0.75)];
+    const iqr = q3 - q1;
+    const lowerBound = q1 - 1.5 * iqr;
+    const upperBound = q3 + 1.5 * iqr;
+
+    // Находим минимальную и максимальную выручку
+    const minRevenue = Math.min(...revenues);
+    const maxRevenue = Math.max(...revenues);
+    const minIndex = revenues.indexOf(minRevenue);
+    const maxIndex = revenues.indexOf(maxRevenue);
+
+    const minDay = dailyData[minIndex];
+    const maxDay = dailyData[maxIndex];
+
+    // Определяем, являются ли они аномалиями
+    const minIsAnomaly = minRevenue < lowerBound;
+    const maxIsAnomaly = maxRevenue > upperBound;
+
+    // Исключаем аномалии из расчета среднего (обучаем модель игнорировать их)
+    const filteredDailyData = dailyData.filter((d, idx) => {
+      if (minIsAnomaly && idx === minIndex) return false;
+      if (maxIsAnomaly && idx === maxIndex) return false;
+      return true;
+    });
+    const filteredRevenues = filteredDailyData.map((d) => d.revenue);
+    const avgRevenue = filteredRevenues.length > 0
+      ? filteredRevenues.reduce((sum, r) => sum + r, 0) / filteredRevenues.length
+      : revenues.reduce((sum, r) => sum + r, 0) / revenues.length;
+
+    // Формируем аномалии
+    const anomalies: MLAnomaly[] = [];
+
+    // Аномалия минимальной выручки
+    if (minIsAnomaly && minDay) {
+      const deviation = ((minRevenue - avgRevenue) / avgRevenue) * 100;
+      const severity: 'low' | 'medium' | 'high' | 'critical' =
+        deviation < -50 ? 'critical' : deviation < -30 ? 'high' : deviation < -15 ? 'medium' : 'low';
+
+      anomalies.push({
+        date: minDay.period,
+        revenue: minRevenue,
+        expectedRevenue: avgRevenue,
+        deviation,
+        severity,
+        type: 'minimum',
+        explanation: `Выручка ${format(new Date(minDay.period), 'dd.MM.yyyy')} — ${minRevenue.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 })} (на ${Math.abs(deviation).toFixed(1)}% ниже среднего).`,
+        recommendations: [
+          'Проверить причины снижения: возможно, это был выходной день или особое событие',
+          'Проанализировать работу персонала в этот день',
+          'Рассмотреть возможность специальных акций для таких дней',
+        ],
+      });
+    }
+
+    // Аномалия максимальной выручки
+    if (maxIsAnomaly && maxDay) {
+      const deviation = ((maxRevenue - avgRevenue) / avgRevenue) * 100;
+      const severity: 'low' | 'medium' | 'high' | 'critical' =
+        deviation > 50 ? 'critical' : deviation > 30 ? 'high' : deviation > 15 ? 'medium' : 'low';
+
+      anomalies.push({
+        date: maxDay.period,
+        revenue: maxRevenue,
+        expectedRevenue: avgRevenue,
+        deviation,
+        severity,
+        type: 'maximum',
+        explanation: `Выручка ${format(new Date(maxDay.period), 'dd.MM.yyyy')} — ${maxRevenue.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 })} (на ${deviation.toFixed(1)}% выше среднего).`,
+        recommendations: [
+          'Проанализировать факторы успеха: возможно, это была акция или особое событие',
+          'Попытаться воспроизвести успешные практики в другие дни',
+          'Увеличить персонал и запасы для таких пиковых дней',
+        ],
+      });
+    }
+
+    // Находим минимальную и максимальную аномалии
+    const minRevenueAnomaly = anomalies.find((a) => a.type === 'minimum');
+    const maxRevenueAnomaly = anomalies.find((a) => a.type === 'maximum');
+
+    // Рассчитываем уверенность на основе качества модели и количества данных
+    const confidence = Math.min(
+      0.95,
+      Math.max(0.5, modelQuality.overall || 0.7) * (1 - Math.min(0.3, anomalies.length / 10)),
+    );
+
+    return {
+      anomalies,
+      modelQuality,
+      minRevenueAnomaly,
+      maxRevenueAnomaly,
+      confidence,
+      dataPoints: dailyData.length,
+    };
+  } catch (error) {
+    console.error('Ошибка при генерации ML анализа:', error);
+    return undefined;
+  }
 }
 
 // Улучшенная функция прогнозирования с интеграцией внешних источников данных
 // Улучшенная функция прогнозирования с ML и временными рядами
 async function generateEnhancedRevenueForecast(
   transactions: Transaction[],
+  enhancedMLEngine: EnhancedMLForecastingEngine,
 ): Promise<RevenueForecast | undefined> {
   if (transactions.length < 14) {
     return undefined; // Минимум 2 недели данных для ML прогноза
   }
 
   try {
-    // Получаем данные из Z-отчетов для улучшения прогнозирования
-    const { storage } = await import('../storage');
-    let profitabilityRecords: ProfitabilityRecord[] | undefined;
-    try {
-      profitabilityRecords = await storage.listAllProfitabilityRecords();
-      // Фильтруем записи по периоду транзакций
-      if (profitabilityRecords.length > 0 && transactions.length > 0) {
-        const minDate = new Date(Math.min(...transactions.map((t) => new Date(t.date).getTime())));
-        const maxDate = new Date(Math.max(...transactions.map((t) => new Date(t.date).getTime())));
-        profitabilityRecords = profitabilityRecords.filter((r) => {
-          const recordDate = r.reportDate;
-          return recordDate >= minDate && recordDate <= maxDate;
-        });
-      }
-    } catch (error) {
-      console.warn('Не удалось загрузить данные из Z-отчетов для прогнозирования:', error);
-      profitabilityRecords = undefined;
-    }
-
-    // Инициализируем внешний сервис данных
-    const externalDataService =
-      process.env.DISABLE_EXTERNAL_DATA === 'true'
-        ? undefined
-        : new ExternalDataService({
-            openWeatherApiKey: process.env.OPENWEATHER_API_KEY || '',
-            exchangeRateApiKey: process.env.EXCHANGERATE_API_KEY || '',
-            calendarificApiKey: process.env.CALENDARIFIC_API_KEY || '',
-            googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY,
-            alphaVantageApiKey: process.env.ALPHA_VANTAGE_API_KEY,
-            fredApiKey: process.env.FRED_API_KEY,
-            newsApiKey: process.env.NEWS_API_KEY,
-            twitterApiKey: process.env.TWITTER_API_KEY,
-          });
-
-    // Инициализируем улучшенный ML движок с внешними данными и данными из Z-отчетов
-    const enhancedMLEngine = new EnhancedMLForecastingEngine(
-      transactions,
-      externalDataService,
-      profitabilityRecords,
-    );
+    const forecastStartTime = performance.now();
 
     // Получаем последнюю дату для расчета периодов
     const sorted = [...transactions].sort(
@@ -1008,6 +1148,37 @@ async function generateEnhancedRevenueForecast(
 
     // Генерируем улучшенный прогноз с помощью ML
     const mlForecast = await enhancedMLEngine.generateEnhancedForecast(7);
+
+    // Получаем метрики качества моделей (после генерации прогноза данные уже подготовлены)
+    const modelQualityMetrics = await enhancedMLEngine.getModelQualityMetrics();
+    
+    // Получаем статус LLM только если LLM движок используется
+    // ВАЖНО: получаем метрики ДО cleanup(), чтобы они не были потеряны
+    const llmStatusStartTime = performance.now();
+    const llmStatus = enhancedMLEngine.isLLMAvailable() 
+      ? enhancedMLEngine.getLLMStatus()
+      : { enabled: false, available: false };
+    const llmStatusTime = performance.now() - llmStatusStartTime;
+    if (llmStatusTime > 100) {
+      log(`⏱️  Получение статуса LLM заняло ${llmStatusTime.toFixed(2)}ms`, 'performance');
+    }
+    
+    // Логируем метрики LLM для отладки
+    if (llmStatus.available && llmStatus.metrics) {
+      log(
+        `📊 LLM метрики: запросов=${llmStatus.metrics.totalRequests}, ` +
+        `успешно=${llmStatus.metrics.successfulRequests}, ` +
+        `ошибок=${llmStatus.metrics.failedRequests}, ` +
+        `кеш=${llmStatus.metrics.cacheHits}, ` +
+        `успешность=${(llmStatus.metrics.successRate * 100).toFixed(1)}%`,
+        'analytics'
+      );
+    }
+    
+    const forecastTime = performance.now() - forecastStartTime;
+    if (forecastTime > 1000) {
+      log(`⏱️  Генерация прогноза заняла ${forecastTime.toFixed(2)}ms`, 'performance');
+    }
 
     // Получаем информацию о сегментах (используем простой движок для совместимости)
     const simpleMLEngine = new SimpleMLForecastingEngine(transactions);
@@ -1042,7 +1213,9 @@ async function generateEnhancedRevenueForecast(
       },
       methodology: {
         algorithm:
-          'ML Ensemble (ARIMA + Prophet + LSTM) with Z-Reports Integration & Customer & Product Segmentation [BETA]',
+          enhancedMLEngine.isLLMAvailable()
+            ? 'ML Ensemble (ARIMA + Prophet + LSTM + LLM) with Customer & Product Segmentation [BETA]'
+            : 'ML Ensemble (ARIMA + Prophet + LSTM) with Customer & Product Segmentation [BETA]',
         dataPoints: transactions.length,
         forecastDays: 7,
         weatherAnalysis: true,
@@ -1050,8 +1223,9 @@ async function generateEnhancedRevenueForecast(
         trendAnalysis: true,
         seasonalAdjustment: true,
         betaVersion: true,
-        betaWarning:
-          'Функция в разработке - возможны неточности в расчетах. Используются данные из Z-отчетов для улучшения точности.',
+        betaWarning: 'Функция в разработке - возможны неточности в расчетах',
+        modelQualityMetrics, // Добавляем метрики качества моделей
+        llmStatus, // Добавляем статус LLM
       },
     };
   } catch (error) {

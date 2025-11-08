@@ -53,7 +53,80 @@ function DashboardLayout() {
   } = useQuery<AnalyticsResponse>({
     queryKey: ['/api/analytics', uploadId, { preset: filter.preset, from: fromIso, to: toIso }],
     enabled: !!uploadId && !isPageWithoutUploadId,
+    retry: 1,
     queryFn: async (): Promise<AnalyticsResponse> => {
+      if (!uploadId) {
+        throw new Error('Отсутствует идентификатор набора данных');
+      }
+
+      try {
+        const params = new URLSearchParams();
+        params.set('preset', filter.preset);
+        if (filter.preset === 'custom') {
+          if (fromIso) {
+            params.set('from', fromIso);
+          }
+          if (toIso) {
+            params.set('to', toIso);
+          }
+        }
+
+        // Добавляем параметр includeLLM для запуска фонового анализа
+        params.set('includeLLM', 'true');
+        
+        const suffix = params.size > 0 ? `?${params.toString()}` : '';
+        const res = await fetch(`/api/analytics/${uploadId}${suffix}`, {
+          credentials: 'include',
+        });
+
+        if (!res.ok) {
+          let errorMessage = 'Не удалось загрузить аналитику';
+          try {
+            const text = await res.text();
+            if (text) {
+              // Пытаемся распарсить как JSON
+              try {
+                const errorData = JSON.parse(text);
+                errorMessage = errorData.error || errorData.message || text;
+              } catch {
+                errorMessage = text;
+              }
+            }
+          } catch {
+            // Если не удалось прочитать текст ошибки, используем статус
+            errorMessage = `Ошибка сервера: ${res.status} ${res.statusText}`;
+          }
+          throw new Error(errorMessage);
+        }
+
+        return (await res.json()) as AnalyticsResponse;
+      } catch (err) {
+        // Обработка сетевых ошибок
+        if (err instanceof TypeError && err.message.includes('fetch')) {
+          throw new Error('Сервер недоступен. Убедитесь, что сервер запущен.');
+        }
+        // Пробрасываем другие ошибки как есть
+        throw err;
+      }
+    },
+  });
+
+  // Polling для проверки статуса LLM анализа
+  const {
+    data: llmStatus,
+  } = useQuery<{ status: string; data?: AnalyticsResponse; error?: string; message?: string }>({
+    queryKey: ['/api/analytics/llm-status', uploadId, { preset: filter.preset, from: fromIso, to: toIso }],
+    enabled: !!uploadId && !isPageWithoutUploadId && !!analytics,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      // Останавливаем polling если статус completed или failed
+      if (data?.status === 'completed' || data?.status === 'failed') {
+        return false;
+      }
+      // Проверяем каждые 2 секунды
+      return 2000;
+    },
+    queryFn: async () => {
       if (!uploadId) {
         throw new Error('Отсутствует идентификатор набора данных');
       }
@@ -70,18 +143,71 @@ function DashboardLayout() {
       }
 
       const suffix = params.size > 0 ? `?${params.toString()}` : '';
-      const res = await fetch(`/api/analytics/${uploadId}${suffix}`, {
+      const res = await fetch(`/api/analytics/${uploadId}/llm-status${suffix}`, {
         credentials: 'include',
       });
 
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || 'Не удалось загрузить аналитику');
+        return { status: 'pending', message: 'Не удалось проверить статус' };
       }
 
-      return (await res.json()) as AnalyticsResponse;
+      return (await res.json()) as { status: string; data?: AnalyticsResponse; error?: string; message?: string };
     },
   });
+
+  // Показываем уведомление когда LLM анализ готов
+  useEffect(() => {
+    if (!llmStatus || llmStatus.status !== 'completed' || !llmStatus.data) {
+      return;
+    }
+
+    // Если данные уже загружены с LLM анализом, не показываем уведомление
+    if (analytics?.advancedAnalytics) {
+      return;
+    }
+
+    // Проверяем, не показывали ли мы уже это уведомление
+    const notificationKey = `llm-completed-${uploadId}-${filter.preset}-${fromIso}-${toIso}`;
+    if (localStorage.getItem(notificationKey)) {
+      return;
+    }
+
+    // Помечаем, что уведомление показано
+    localStorage.setItem(notificationKey, 'true');
+
+    toast({
+      title: 'Углубленный анализ готов',
+      description: 'LLM анализ завершен. Нажмите "Обновить" для загрузки данных с углубленным анализом.',
+      action: (
+        <button
+          onClick={() => {
+            // Инвалидируем запрос аналитики для перезагрузки с LLM данными
+            queryClient.invalidateQueries({ 
+              queryKey: ['/api/analytics', uploadId, { preset: filter.preset, from: fromIso, to: toIso }] 
+            });
+            // Также инвалидируем запрос статуса LLM, чтобы он перезагрузился
+            queryClient.invalidateQueries({ 
+              queryKey: ['/api/analytics/llm-status', uploadId, { preset: filter.preset, from: fromIso, to: toIso }] 
+            });
+            // Удаляем ключ из localStorage, чтобы при следующей загрузке данных с LLM уведомление не показывалось
+            localStorage.removeItem(notificationKey);
+          }}
+          className="px-3 py-1 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90"
+        >
+          Обновить
+        </button>
+      ),
+      duration: 10000, // Показываем 10 секунд
+    });
+  }, [llmStatus, uploadId, filter.preset, fromIso, toIso, toast, analytics]);
+
+  // Очищаем ключ уведомления, если данные с LLM анализом уже загружены
+  useEffect(() => {
+    if (analytics?.advancedAnalytics && uploadId) {
+      const notificationKey = `llm-completed-${uploadId}-${filter.preset}-${fromIso}-${toIso}`;
+      localStorage.removeItem(notificationKey);
+    }
+  }, [analytics?.advancedAnalytics, uploadId, filter.preset, fromIso, toIso]);
 
   useEffect(() => {
     if (!isError || !uploadId) {
@@ -89,11 +215,31 @@ function DashboardLayout() {
     }
 
     console.error('Failed to load analytics:', error);
-    localStorage.removeItem('coffee-kpi-uploadId');
-    setUploadId(null);
+    
+    // Получаем понятное сообщение об ошибке
+    let errorMessage = 'Не удалось загрузить данные';
+    if (error instanceof Error) {
+      errorMessage = error.message;
+    } else if (typeof error === 'string') {
+      errorMessage = error;
+    }
+
+    // Очищаем uploadId только если это не сетевая ошибка
+    // При сетевой ошибке лучше оставить uploadId, чтобы пользователь мог попробовать снова
+    const isNetworkError = errorMessage.includes('Сервер недоступен') || 
+                          errorMessage.includes('Failed to fetch') ||
+                          errorMessage.includes('NetworkError');
+    
+    if (!isNetworkError) {
+      localStorage.removeItem('coffee-kpi-uploadId');
+      setUploadId(null);
+    }
+
     toast({
-      title: 'Данные устарели',
-      description: 'Пожалуйста, загрузите файл снова',
+      title: isNetworkError ? 'Ошибка подключения' : 'Данные устарели',
+      description: isNetworkError 
+        ? 'Не удалось подключиться к серверу. Проверьте, что сервер запущен.'
+        : 'Пожалуйста, загрузите файл снова',
       variant: 'destructive',
     });
   }, [isError, uploadId, error, toast]);
@@ -112,8 +258,14 @@ function DashboardLayout() {
       });
 
       if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.error || 'Ошибка загрузки файла');
+        let errorMessage = 'Ошибка загрузки файла';
+        try {
+          const errorData = await res.json();
+          errorMessage = errorData.error || errorData.message || errorMessage;
+        } catch {
+          errorMessage = `Ошибка сервера: ${res.status} ${res.statusText}`;
+        }
+        throw new Error(errorMessage);
       }
 
       const response: FileUploadResponse = await res.json();
@@ -130,9 +282,19 @@ function DashboardLayout() {
         });
       }
     } catch (error) {
+      let errorMessage = 'Не удалось загрузить файл';
+      if (error instanceof Error) {
+        // Обработка сетевых ошибок
+        if (error.message.includes('fetch') || error.message.includes('Failed to fetch')) {
+          errorMessage = 'Сервер недоступен. Убедитесь, что сервер запущен.';
+        } else {
+          errorMessage = error.message;
+        }
+      }
+      
       toast({
         title: 'Ошибка загрузки',
-        description: error instanceof Error ? error.message : 'Не удалось загрузить файл',
+        description: errorMessage,
         variant: 'destructive',
       });
     } finally {

@@ -75,19 +75,33 @@ const authAPI = {
   },
 
   async getMe(): Promise<{ success: boolean; user: AuthUser }> {
-    const response = await fetch('/api/auth/me', {
-      credentials: 'include',
-    });
+    try {
+      const response = await fetch('/api/auth/me', {
+        credentials: 'include',
+      });
 
-    if (!response.ok) {
-      if (response.status === 401) {
-        throw new Error('Unauthorized');
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error('Unauthorized');
+        }
+        let errorMessage = 'Ошибка получения данных пользователя';
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.message || errorMessage;
+        } catch {
+          errorMessage = `Ошибка сервера: ${response.status} ${response.statusText}`;
+        }
+        throw new Error(errorMessage);
       }
-      const errorData = await response.json();
-      throw new Error(errorData.message || 'Ошибка получения данных пользователя');
-    }
 
-    return response.json();
+      return response.json();
+    } catch (err) {
+      // Обработка сетевых ошибок
+      if (err instanceof TypeError && err.message.includes('fetch')) {
+        throw new Error('Сервер недоступен. Убедитесь, что сервер запущен.');
+      }
+      throw err;
+    }
   },
 
   async changePassword(data: ChangePasswordData): Promise<AuthResponse> {
@@ -257,13 +271,15 @@ export function useAuth(): AuthContextType {
       if (userData.user?.email) {
         localStorage.setItem('coffee-kpi-last-email', userData.user.email);
       }
-    } else if (error instanceof Error && error.message === 'Unauthorized') {
+    } else if (error instanceof Error) {
+      // При любой ошибке (включая Unauthorized и сетевые ошибки) считаем пользователя неавторизованным
       setAuthState({
         user: null,
         isLoading: false,
         isAuthenticated: false,
       });
     } else if (!isUserLoading) {
+      // Если загрузка завершена без данных и без ошибки, пользователь не авторизован
       setAuthState({
         user: null,
         isLoading: false,

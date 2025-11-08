@@ -1,5 +1,6 @@
-import { Transaction, ForecastData } from '@shared/schema';
+import { Transaction, ForecastData, InsertForecastPrediction } from '@shared/schema';
 import { addDays, format, getDay, startOfDay, endOfDay } from 'date-fns';
+import type { IStorage } from '../storage';
 
 const isEnsembleDebugEnabled = process.env.DEBUG_ENSEMBLE === 'true';
 
@@ -74,9 +75,17 @@ export class SimpleMLForecastingEngine {
   private transactions: Transaction[];
   private customerSegments: CustomerSegment[] = [];
   private productSegments: ProductSegment[] = [];
+  private storage?: IStorage; // Хранилище для сохранения прогнозов
+  private uploadId?: string; // ID загрузки данных для связи прогнозов с данными
 
-  constructor(transactions: Transaction[]) {
+  constructor(
+    transactions: Transaction[],
+    storage?: IStorage,
+    uploadId?: string,
+  ) {
     this.transactions = transactions;
+    this.storage = storage;
+    this.uploadId = uploadId;
     this.initializeSegments();
   }
 
@@ -345,6 +354,12 @@ export class SimpleMLForecastingEngine {
 
     // Генерация прогнозов
     const forecasts: ForecastData[] = [];
+    const modelPredictions: { arima: number[]; prophet: number[]; lstm: number[]; ensemble: number[] } = {
+      arima: [],
+      prophet: [],
+      lstm: [],
+      ensemble: [],
+    };
     const lastDate = new Date(timeSeriesData[timeSeriesData.length - 1].date);
     const avgRevenue =
       timeSeriesData.reduce((sum, d) => sum + d.revenue, 0) / timeSeriesData.length;
@@ -416,6 +431,12 @@ export class SimpleMLForecastingEngine {
       // Определение тренда
       const trend = arimaModel.slope > 0.05 ? 'up' : arimaModel.slope < -0.05 ? 'down' : 'stable';
 
+      // Сохраняем прогнозы от отдельных моделей для последующего сохранения
+      modelPredictions.arima.push(arimaPrediction);
+      modelPredictions.prophet.push(prophetPrediction);
+      modelPredictions.lstm.push(lstmPrediction);
+      modelPredictions.ensemble.push(safePrediction);
+
       forecasts.push({
         date: format(forecastDate, 'yyyy-MM-dd'),
         predictedRevenue: Math.round(safePrediction),
@@ -460,7 +481,90 @@ export class SimpleMLForecastingEngine {
       });
     }
 
+    // Сохраняем прогнозы в БД для обратной связи
+    if (this.storage && this.uploadId) {
+      await this.saveForecastsToStorage(forecasts, modelPredictions, lastDate);
+    }
+
     return forecasts;
+  }
+
+  /**
+   * Сохраняет прогнозы всех моделей в хранилище для последующего анализа отклонений
+   */
+  private async saveForecastsToStorage(
+    forecasts: ForecastData[],
+    modelPredictions: { arima: number[]; prophet: number[]; lstm: number[]; ensemble: number[] },
+    lastDate: Date,
+  ): Promise<void> {
+    if (!this.storage || !this.uploadId) {
+      return;
+    }
+
+    try {
+      const savePromises: Promise<any>[] = [];
+
+      // Сохраняем прогнозы от каждой модели отдельно
+      const modelData = [
+        { name: 'ARIMA', predictions: modelPredictions.arima },
+        { name: 'Prophet', predictions: modelPredictions.prophet },
+        { name: 'LSTM', predictions: modelPredictions.lstm },
+      ];
+
+      for (let i = 0; i < forecasts.length; i++) {
+        const forecast = forecasts[i];
+        const forecastDate = new Date(forecast.date);
+        const dayOfWeek = getDay(forecastDate);
+        const horizon = i + 1;
+
+        // Сохраняем прогнозы от отдельных моделей
+        for (const model of modelData) {
+          const prediction: InsertForecastPrediction = {
+            uploadId: this.uploadId,
+            modelName: model.name,
+            forecastDate: forecastDate,
+            actualDate: forecastDate,
+            predictedRevenue: model.predictions[i] || 0,
+            actualRevenue: null,
+            dayOfWeek,
+            horizon,
+            mape: null,
+            mae: null,
+            rmse: null,
+            factors: forecast.factors || null,
+          };
+
+          savePromises.push(this.storage.createForecastPrediction(prediction));
+        }
+
+        // Сохраняем финальный ансамбль-прогноз
+        const ensemblePredictionData: InsertForecastPrediction = {
+          uploadId: this.uploadId,
+          modelName: 'Ensemble',
+          forecastDate: forecastDate,
+          actualDate: forecastDate,
+          predictedRevenue: modelPredictions.ensemble[i] || forecast.predictedRevenue,
+          actualRevenue: null,
+          dayOfWeek,
+          horizon,
+          mape: null,
+          mae: null,
+          rmse: null,
+          factors: forecast.factors || null,
+        };
+
+        savePromises.push(this.storage.createForecastPrediction(ensemblePredictionData));
+      }
+
+      // Выполняем сохранение параллельно
+      await Promise.all(savePromises);
+      console.log(
+        `[SimpleMLForecast] Сохранено ${savePromises.length} прогнозов для uploadId: ${this.uploadId}`,
+      );
+    } catch (error) {
+      console.error('[SimpleMLForecast] Ошибка при сохранении прогнозов:', error);
+      // Не прерываем выполнение, если сохранение не удалось
+    }
   }
 
   // Расчет факторов влияния

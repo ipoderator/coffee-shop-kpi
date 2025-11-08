@@ -1,11 +1,17 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { PeriodTabs, PeriodType } from '@/components/PeriodTabs';
 import { RevenueChart } from '@/components/RevenueChart';
 import { Card } from '@/components/ui/card';
 import { StatCard } from '@/components/StatCard';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { TrendingUp, TrendingDown, Target } from 'lucide-react';
 import type { AnalyticsResponse, PeriodData } from '@shared/schema';
+import {
+  calculateMLAdjustedRevenueMetrics,
+  calculateMLAdjustedChecksMetrics,
+  formatDeviation,
+} from '@/utils/mlMetrics';
 
 interface SalesPageProps {
   analytics: AnalyticsResponse;
@@ -64,6 +70,23 @@ export default function SalesPage({ analytics }: SalesPageProps) {
 
   const periodData = getPeriodData();
   const hasTrend = periodData.length >= 2;
+
+  // Рассчитываем ML-скорректированные метрики
+  const mlRevenueMetrics = useMemo(
+    () =>
+      calculateMLAdjustedRevenueMetrics(
+        periodData,
+        analytics.forecast,
+        analytics.advancedAnalytics?.anomalies,
+      ),
+    [periodData, analytics.forecast, analytics.advancedAnalytics?.anomalies],
+  );
+
+  // Рассчитываем ML-скорректированные метрики чеков
+  const mlChecksMetrics = useMemo(
+    () => calculateMLAdjustedChecksMetrics(periodData, analytics.forecast),
+    [periodData, analytics.forecast],
+  );
 
   const calculateTrend = () => {
     // For monthly period, use the corrected MoM growth from KPI which compares same periods
@@ -164,17 +187,21 @@ export default function SalesPage({ analytics }: SalesPageProps) {
                   currency: 'RUB',
                   minimumFractionDigits: 0,
                   maximumFractionDigits: 0,
-                }).format(Math.max(...periodData.map((d) => d.revenue)))}
-                subtitle={
-                  periodData.find(
-                    (d) => d.revenue === Math.max(...periodData.map((p) => p.revenue)),
-                  )?.period
-                }
+                }).format(mlRevenueMetrics.maxRevenue.actual)}
+                subtitle={mlRevenueMetrics.maxRevenue.date}
                 icon={<TrendingUp className="w-5 h-5 text-chart-2" />}
                 progress={{
-                  value: Math.max(...periodData.map((d) => d.revenue)),
+                  value: mlRevenueMetrics.maxRevenue.actual,
                   max: Math.max(...periodData.map((d) => d.revenue)),
                   color: 'chart-2',
+                }}
+                mlData={{
+                  expectedValue: mlRevenueMetrics.maxRevenue.expected,
+                  deviation: mlRevenueMetrics.maxRevenue.deviation,
+                  isAnomaly: mlRevenueMetrics.maxRevenue.isAnomaly,
+                  anomaly: mlRevenueMetrics.maxRevenue.anomaly,
+                  confidence: analytics.forecast?.extendedForecast?.averageConfidence ||
+                    analytics.forecast?.nextMonth?.confidence,
                 }}
                 testId="stat-max-revenue"
               />
@@ -188,17 +215,21 @@ export default function SalesPage({ analytics }: SalesPageProps) {
                   currency: 'RUB',
                   minimumFractionDigits: 0,
                   maximumFractionDigits: 0,
-                }).format(Math.min(...periodData.map((d) => d.revenue)))}
-                subtitle={
-                  periodData.find(
-                    (d) => d.revenue === Math.min(...periodData.map((p) => p.revenue)),
-                  )?.period
-                }
+                }).format(mlRevenueMetrics.minRevenue.actual)}
+                subtitle={mlRevenueMetrics.minRevenue.date}
                 icon={<TrendingDown className="w-5 h-5 text-destructive" />}
                 progress={{
-                  value: Math.min(...periodData.map((d) => d.revenue)),
+                  value: mlRevenueMetrics.minRevenue.actual,
                   max: Math.max(...periodData.map((d) => d.revenue)),
                   color: 'destructive',
+                }}
+                mlData={{
+                  expectedValue: mlRevenueMetrics.minRevenue.expected,
+                  deviation: mlRevenueMetrics.minRevenue.deviation,
+                  isAnomaly: mlRevenueMetrics.minRevenue.isAnomaly,
+                  anomaly: mlRevenueMetrics.minRevenue.anomaly,
+                  confidence: analytics.forecast?.extendedForecast?.averageConfidence ||
+                    analytics.forecast?.nextMonth?.confidence,
                 }}
                 testId="stat-min-revenue"
               />
@@ -212,13 +243,18 @@ export default function SalesPage({ analytics }: SalesPageProps) {
                   currency: 'RUB',
                   minimumFractionDigits: 0,
                   maximumFractionDigits: 0,
-                }).format(periodData.reduce((sum, d) => sum + d.revenue, 0) / periodData.length)}
+                }).format(mlRevenueMetrics.avgRevenue.actual)}
                 subtitle={`За ${periodData.length} ${selectedPeriod === 'day' ? 'дней' : selectedPeriod === 'month' ? 'месяцев' : 'лет'}`}
                 icon={<Target className="w-5 h-5 text-primary" />}
                 progress={{
-                  value: periodData.reduce((sum, d) => sum + d.revenue, 0) / periodData.length,
+                  value: mlRevenueMetrics.avgRevenue.actual,
                   max: Math.max(...periodData.map((d) => d.revenue)),
                   color: 'primary',
+                }}
+                mlData={{
+                  expectedValue: mlRevenueMetrics.avgRevenue.expected,
+                  deviation: mlRevenueMetrics.avgRevenue.deviation,
+                  confidence: mlRevenueMetrics.avgRevenue.confidence,
                 }}
                 testId="stat-avg-revenue"
               />
@@ -236,25 +272,82 @@ export default function SalesPage({ analytics }: SalesPageProps) {
               <div className="space-y-4">
                 <h3 className="font-semibold text-lg">Общее количество чеков</h3>
                 <p className="text-3xl font-bold tabular-nums">
-                  {new Intl.NumberFormat('ru-RU').format(
-                    periodData.reduce((sum, d) => sum + d.checks, 0),
-                  )}
+                  {new Intl.NumberFormat('ru-RU').format(mlChecksMetrics.totalChecks)}
                 </p>
-                <div className="pt-2 border-t">
+                <div className="pt-2 border-t space-y-2">
                   <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Средний чек</span>
+                    <span className="text-muted-foreground">Средний чек (факт)</span>
                     <span className="font-semibold">
                       {new Intl.NumberFormat('ru-RU', {
                         style: 'currency',
                         currency: 'RUB',
                         minimumFractionDigits: 0,
                         maximumFractionDigits: 0,
-                      }).format(
-                        periodData.reduce((sum, d) => sum + d.revenue, 0) /
-                          periodData.reduce((sum, d) => sum + d.checks, 0),
-                      )}
+                      }).format(mlChecksMetrics.avgCheck.actual)}
                     </span>
                   </div>
+                  {analytics.forecast && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Средний чек (ML ожидание)</span>
+                      <span className="font-semibold text-muted-foreground">
+                        {new Intl.NumberFormat('ru-RU', {
+                          style: 'currency',
+                          currency: 'RUB',
+                          minimumFractionDigits: 0,
+                          maximumFractionDigits: 0,
+                        }).format(mlChecksMetrics.avgCheck.expected)}
+                      </span>
+                    </div>
+                  )}
+                  {mlChecksMetrics.avgCheck.deviation !== 0 && (
+                    <div className="flex justify-between items-center text-xs pt-1">
+                      <span className="text-muted-foreground">Отклонение</span>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span
+                              className={`font-medium cursor-help ${
+                                Math.abs(mlChecksMetrics.avgCheck.deviation) > 10
+                                  ? 'text-destructive'
+                                  : Math.abs(mlChecksMetrics.avgCheck.deviation) > 5
+                                    ? 'text-yellow-600 dark:text-yellow-500'
+                                    : 'text-muted-foreground'
+                              }`}
+                            >
+                              {formatDeviation(mlChecksMetrics.avgCheck.deviation)}
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-xs">
+                            <div className="space-y-1">
+                              <p className="font-semibold text-xs">Отклонение среднего чека</p>
+                              <p className="text-xs text-muted-foreground">
+                                {mlChecksMetrics.avgCheck.deviation > 0
+                                  ? `Фактический средний чек на ${formatDeviation(mlChecksMetrics.avgCheck.deviation)} выше ожидаемого`
+                                  : `Фактический средний чек на ${formatDeviation(Math.abs(mlChecksMetrics.avgCheck.deviation))} ниже ожидаемого`}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                Ожидаемое значение рассчитывается на основе медианы и скользящего среднего исторических данных о средних чеках
+                              </p>
+                              <div className="text-xs text-muted-foreground mt-1 pt-1 border-t">
+                                <p>Факт: {new Intl.NumberFormat('ru-RU', {
+                                  style: 'currency',
+                                  currency: 'RUB',
+                                  minimumFractionDigits: 0,
+                                  maximumFractionDigits: 0,
+                                }).format(mlChecksMetrics.avgCheck.actual)}</p>
+                                <p>Ожидание: {new Intl.NumberFormat('ru-RU', {
+                                  style: 'currency',
+                                  currency: 'RUB',
+                                  minimumFractionDigits: 0,
+                                  maximumFractionDigits: 0,
+                                }).format(mlChecksMetrics.avgCheck.expected)}</p>
+                              </div>
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </div>
+                  )}
                 </div>
               </div>
             </Card>
@@ -266,9 +359,7 @@ export default function SalesPage({ analytics }: SalesPageProps) {
                   <div className="flex justify-between items-center">
                     <span className="text-sm text-muted-foreground">Чеков за период</span>
                     <span className="font-semibold tabular-nums">
-                      {(
-                        periodData.reduce((sum, d) => sum + d.checks, 0) / periodData.length
-                      ).toFixed(0)}
+                      {mlChecksMetrics.avgChecksPerPeriod.toFixed(0)}
                     </span>
                   </div>
                   <div className="flex justify-between items-center">
@@ -279,7 +370,7 @@ export default function SalesPage({ analytics }: SalesPageProps) {
                         currency: 'RUB',
                         minimumFractionDigits: 0,
                         maximumFractionDigits: 0,
-                      }).format(Math.max(...periodData.map((d) => d.averageCheck)))}
+                      }).format(mlChecksMetrics.maxCheck.actual)}
                     </span>
                   </div>
                   <div className="flex justify-between items-center">
@@ -290,9 +381,26 @@ export default function SalesPage({ analytics }: SalesPageProps) {
                         currency: 'RUB',
                         minimumFractionDigits: 0,
                         maximumFractionDigits: 0,
-                      }).format(Math.min(...periodData.map((d) => d.averageCheck)))}
+                      }).format(mlChecksMetrics.minCheck.actual)}
                     </span>
                   </div>
+                  {analytics.forecast && (
+                    <div className="pt-2 border-t space-y-1">
+                      <div className="text-xs text-muted-foreground">
+                        ML ожидание среднего чека: {new Intl.NumberFormat('ru-RU', {
+                          style: 'currency',
+                          currency: 'RUB',
+                          minimumFractionDigits: 0,
+                          maximumFractionDigits: 0,
+                        }).format(mlChecksMetrics.avgCheck.expected)}
+                      </div>
+                      {analytics.forecast.extendedForecast?.averageConfidence && (
+                        <div className="text-xs text-muted-foreground">
+                          Уверенность модели: {(analytics.forecast.extendedForecast.averageConfidence * 100).toFixed(0)}%
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             </Card>

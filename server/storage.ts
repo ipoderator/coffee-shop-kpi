@@ -19,10 +19,15 @@ import {
   type SalesZReport,
   type CogsDaily,
   type ImportBatch,
+  type ForecastPrediction,
+  type InsertForecastPrediction,
+  type ModelAccuracyMetric,
+  type InsertModelAccuracyMetric,
 } from '@shared/schema';
 import { randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
 import { join } from 'path';
+import { log } from './vite';
 
 export interface IStorage {
   // Transactions
@@ -72,6 +77,35 @@ export interface IStorage {
   getSecurityLogsByUserId(userId: string, limit: number, offset: number): Promise<SecurityLog[]>;
   updateUserFailedAttempts(userId: string, attempts: number, lockedUntil?: Date): Promise<void>;
   resetUserFailedAttempts(userId: string): Promise<void>;
+
+  // Forecast Predictions (Feedback Loop)
+  createForecastPrediction(prediction: InsertForecastPrediction): Promise<ForecastPrediction>;
+  getForecastPredictionById(id: string): Promise<ForecastPrediction | null>;
+  updateForecastPredictionWithActual(
+    id: string,
+    actualRevenue: number,
+    mape: number,
+    mae: number,
+    rmse: number,
+  ): Promise<ForecastPrediction | null>;
+  getForecastPredictionsByUploadId(uploadId: string): Promise<ForecastPrediction[]>;
+  getForecastPredictionsWithoutActual(limit?: number): Promise<ForecastPrediction[]>;
+  getForecastPredictionsByModel(
+    modelName: string,
+    dayOfWeek?: number,
+    horizon?: number,
+  ): Promise<ForecastPrediction[]>;
+  getAllForecastPredictions(): Promise<ForecastPrediction[]>;
+
+  // Model Accuracy Metrics
+  getModelAccuracyMetric(
+    modelName: string,
+    dayOfWeek?: number | null,
+    horizon?: number | null,
+  ): Promise<ModelAccuracyMetric | null>;
+  upsertModelAccuracyMetric(metric: InsertModelAccuracyMetric): Promise<ModelAccuracyMetric>;
+  getAllModelAccuracyMetrics(): Promise<ModelAccuracyMetric[]>;
+  getModelAccuracyMetricsByModel(modelName: string): Promise<ModelAccuracyMetric[]>;
 }
 
 export interface CreateProfitabilityDatasetInput {
@@ -161,6 +195,8 @@ export class MemStorage implements IStorage {
   private importBatches: Map<string, ImportBatch>;
   private cogsDailyRecords: Map<string, CogsDaily>;
   private profitabilityFiles: Map<string, Buffer>;
+  private forecastPredictions: Map<string, ForecastPrediction>;
+  private modelAccuracyMetrics: Map<string, ModelAccuracyMetric>;
 
   constructor() {
     this.transactions = new Map();
@@ -173,6 +209,8 @@ export class MemStorage implements IStorage {
     this.importBatches = new Map();
     this.cogsDailyRecords = new Map();
     this.profitabilityFiles = new Map();
+    this.forecastPredictions = new Map();
+    this.modelAccuracyMetrics = new Map();
   }
 
   /**
@@ -260,31 +298,71 @@ export class MemStorage implements IStorage {
   }
 
   async createTransactions(insertTransactions: InsertTransaction[]): Promise<Transaction[]> {
-    const created: Transaction[] = [];
-    for (const insertTx of insertTransactions) {
-      const id = randomUUID();
-      const transaction: Transaction = {
-        ...insertTx,
-        id,
-        year: insertTx.year ?? null,
-        month: insertTx.month ?? null,
-        checksCount: insertTx.checksCount ?? null,
-        cashPayment: insertTx.cashPayment ?? null,
-        terminalPayment: insertTx.terminalPayment ?? null,
-        qrPayment: insertTx.qrPayment ?? null,
-        sbpPayment: insertTx.sbpPayment ?? null,
-        refundChecksCount: insertTx.refundChecksCount ?? null,
-        refundCashPayment: insertTx.refundCashPayment ?? null,
-        refundTerminalPayment: insertTx.refundTerminalPayment ?? null,
-        refundQrPayment: insertTx.refundQrPayment ?? null,
-        refundSbpPayment: insertTx.refundSbpPayment ?? null,
-        category: insertTx.category ?? null,
-        employee: insertTx.employee ?? null,
-        costOfGoods: insertTx.costOfGoods ?? null,
-      };
-      this.transactions.set(id, transaction);
-      created.push(transaction);
+    if (insertTransactions.length === 0) {
+      return [];
     }
+
+    const startTime = performance.now();
+
+    // Батчинг для оптимизации: увеличиваем размер батча до 1500 для лучшей производительности
+    // При миграции на PostgreSQL используйте bulkInsertTransactions из server/utils/postgresBulkInsert.ts
+    // Пример: return await bulkInsertTransactions(db, insertTransactions, BATCH_SIZE);
+    const BATCH_SIZE = 1500; // Увеличено с 500 до 1500 для лучшей производительности
+    const created: Transaction[] = [];
+    created.length = insertTransactions.length; // Оптимизация: предвыделяем размер массива
+    const totalBatches = Math.ceil(insertTransactions.length / BATCH_SIZE);
+    const transactionsLength = insertTransactions.length;
+
+    for (let i = 0; i < transactionsLength; i += BATCH_SIZE) {
+      const batchEnd = Math.min(i + BATCH_SIZE, transactionsLength);
+      const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
+      
+      // Оптимизация: обрабатываем батч без создания промежуточного массива slice
+      const batchStartTime = performance.now();
+      
+      // Оптимизация: предгенерируем UUID для батча для ускорения (если батч большой)
+      // Для in-memory storage это не критично, но может помочь при миграции на PostgreSQL
+      for (let j = i; j < batchEnd; j++) {
+        const insertTx = insertTransactions[j];
+        // Оптимизация: randomUUID() уже достаточно быстрый, но можно оптимизировать создание объекта
+        const id = randomUUID();
+        // Оптимизация: создаем объект напрямую без spread оператора где возможно
+        // Минимизируем количество операций nullish coalescing
+        const transaction: Transaction = {
+          id,
+          date: insertTx.date,
+          year: insertTx.year ?? null,
+          month: insertTx.month ?? null,
+          amount: insertTx.amount,
+          checksCount: insertTx.checksCount ?? null,
+          cashPayment: insertTx.cashPayment ?? null,
+          terminalPayment: insertTx.terminalPayment ?? null,
+          qrPayment: insertTx.qrPayment ?? null,
+          sbpPayment: insertTx.sbpPayment ?? null,
+          refundChecksCount: insertTx.refundChecksCount ?? null,
+          refundCashPayment: insertTx.refundCashPayment ?? null,
+          refundTerminalPayment: insertTx.refundTerminalPayment ?? null,
+          refundQrPayment: insertTx.refundQrPayment ?? null,
+          refundSbpPayment: insertTx.refundSbpPayment ?? null,
+          category: insertTx.category ?? null,
+          employee: insertTx.employee ?? null,
+          costOfGoods: insertTx.costOfGoods ?? null,
+          uploadId: insertTx.uploadId,
+        };
+        this.transactions.set(id, transaction);
+        created[j] = transaction;
+      }
+      
+      if (totalBatches > 1) {
+        const batchTime = (performance.now() - batchStartTime).toFixed(2);
+        const batchLength = batchEnd - i;
+        log(`📦 Батч ${batchNumber}/${totalBatches} обработан за ${batchTime}ms (${batchLength} записей)`, 'storage');
+      }
+    }
+
+    const totalTime = (performance.now() - startTime).toFixed(2);
+    log(`💾 Сохранено ${created.length} транзакций за ${totalTime}ms (${totalBatches} батчей)`, 'storage');
+
     return created;
   }
 
@@ -656,6 +734,145 @@ export class MemStorage implements IStorage {
       this.users.set(userId, updatedUser);
       await this.saveUsers();
     }
+  }
+
+  // Forecast Predictions methods
+  async createForecastPrediction(prediction: InsertForecastPrediction): Promise<ForecastPrediction> {
+    const id = randomUUID();
+    const now = new Date();
+    const forecastPrediction: ForecastPrediction = {
+      ...prediction,
+      id,
+      actualRevenue: prediction.actualRevenue ?? null,
+      mape: prediction.mape ?? null,
+      mae: prediction.mae ?? null,
+      rmse: prediction.rmse ?? null,
+      dayOfWeek: prediction.dayOfWeek ?? null,
+      factors: (prediction.factors as ForecastPrediction['factors']) ?? null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.forecastPredictions.set(id, forecastPrediction);
+    return forecastPrediction;
+  }
+
+  async getForecastPredictionById(id: string): Promise<ForecastPrediction | null> {
+    return this.forecastPredictions.get(id) ?? null;
+  }
+
+  async updateForecastPredictionWithActual(
+    id: string,
+    actualRevenue: number,
+    mape: number,
+    mae: number,
+    rmse: number,
+  ): Promise<ForecastPrediction | null> {
+    const prediction = this.forecastPredictions.get(id);
+    if (!prediction) {
+      return null;
+    }
+    const updated: ForecastPrediction = {
+      ...prediction,
+      actualRevenue,
+      mape,
+      mae,
+      rmse,
+      updatedAt: new Date(),
+    };
+    this.forecastPredictions.set(id, updated);
+    return updated;
+  }
+
+  async getForecastPredictionsByUploadId(uploadId: string): Promise<ForecastPrediction[]> {
+    return Array.from(this.forecastPredictions.values()).filter((p) => p.uploadId === uploadId);
+  }
+
+  async getForecastPredictionsWithoutActual(limit?: number): Promise<ForecastPrediction[]> {
+    const predictions = Array.from(this.forecastPredictions.values())
+      .filter((p) => p.actualRevenue === null)
+      .sort((a, b) => a.actualDate.getTime() - b.actualDate.getTime());
+    return limit ? predictions.slice(0, limit) : predictions;
+  }
+
+  async getForecastPredictionsByModel(
+    modelName: string,
+    dayOfWeek?: number,
+    horizon?: number,
+  ): Promise<ForecastPrediction[]> {
+    return Array.from(this.forecastPredictions.values()).filter((p) => {
+      if (p.modelName !== modelName) return false;
+      if (dayOfWeek !== undefined && p.dayOfWeek !== dayOfWeek) return false;
+      if (horizon !== undefined && p.horizon !== horizon) return false;
+      return true;
+    });
+  }
+
+  async getAllForecastPredictions(): Promise<ForecastPrediction[]> {
+    return Array.from(this.forecastPredictions.values());
+  }
+
+  // Model Accuracy Metrics methods
+  async getModelAccuracyMetric(
+    modelName: string,
+    dayOfWeek?: number | null,
+    horizon?: number | null,
+  ): Promise<ModelAccuracyMetric | null> {
+    // Ищем точное совпадение
+    for (const metric of Array.from(this.modelAccuracyMetrics.values())) {
+      if (
+        metric.modelName === modelName &&
+        (dayOfWeek === undefined || metric.dayOfWeek === dayOfWeek) &&
+        (horizon === undefined || metric.horizon === horizon)
+      ) {
+        return metric;
+      }
+    }
+    return null;
+  }
+
+  async upsertModelAccuracyMetric(metric: InsertModelAccuracyMetric): Promise<ModelAccuracyMetric> {
+    // Ищем существующую метрику
+    const existing = Array.from(this.modelAccuracyMetrics.values()).find(
+      (m) =>
+        m.modelName === metric.modelName &&
+        m.dayOfWeek === (metric.dayOfWeek ?? null) &&
+        m.horizon === (metric.horizon ?? null),
+    );
+
+    const now = new Date();
+    if (existing) {
+      // Обновляем существующую
+      const updated: ModelAccuracyMetric = {
+        ...existing,
+        mape: metric.mape,
+        mae: metric.mae,
+        rmse: metric.rmse,
+        sampleSize: metric.sampleSize,
+        lastUpdated: now,
+      };
+      this.modelAccuracyMetrics.set(existing.id, updated);
+      return updated;
+    } else {
+      // Создаем новую
+      const id = randomUUID();
+      const newMetric: ModelAccuracyMetric = {
+        ...metric,
+        id,
+        dayOfWeek: metric.dayOfWeek ?? null,
+        horizon: metric.horizon ?? null,
+        lastUpdated: now,
+      };
+      this.modelAccuracyMetrics.set(id, newMetric);
+      return newMetric;
+    }
+  }
+
+  async getAllModelAccuracyMetrics(): Promise<ModelAccuracyMetric[]> {
+    return Array.from(this.modelAccuracyMetrics.values());
+  }
+
+  async getModelAccuracyMetricsByModel(modelName: string): Promise<ModelAccuracyMetric[]> {
+    return Array.from(this.modelAccuracyMetrics.values()).filter((m) => m.modelName === modelName);
   }
 
   /**

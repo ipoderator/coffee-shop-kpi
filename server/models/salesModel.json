@@ -152,7 +152,7 @@
   },
   "metadata": {
     "version": 2,
-    "trainedAt": "2025-11-05T16:43:43.861Z",
+    "trainedAt": "2025-11-08T14:39:37.937Z",
     "trainingSamples": 151,
     "featuresUsed": 35,
     "lambda": 0.0001,

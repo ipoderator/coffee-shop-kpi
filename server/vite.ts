@@ -8,6 +8,33 @@ import { nanoid } from 'nanoid';
 
 const viteLogger = createLogger();
 
+// Путь к директории логов
+const logsDir = path.resolve(import.meta.dirname, '..', 'logs');
+
+// Создаем директорию для логов, если её нет
+if (!fs.existsSync(logsDir)) {
+  fs.mkdirSync(logsDir, { recursive: true });
+}
+
+// Получаем имя файла лога на основе текущей даты
+function getLogFileName(): string {
+  const now = new Date();
+  const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
+  return path.join(logsDir, `server-${dateStr}.log`);
+}
+
+// Записываем сообщение в файл лога
+async function writeToLogFile(message: string): Promise<void> {
+  try {
+    const logFile = getLogFileName();
+    const logMessage = `${message}\n`;
+    await fs.promises.appendFile(logFile, logMessage, 'utf-8');
+  } catch (error) {
+    // Не прерываем выполнение при ошибке записи в файл
+    console.error('Failed to write to log file:', error);
+  }
+}
+
 export function log(message: string, source = 'express') {
   const formattedTime = new Date().toLocaleTimeString('en-US', {
     hour: 'numeric',
@@ -16,7 +43,15 @@ export function log(message: string, source = 'express') {
     hour12: true,
   });
 
-  console.log(`${formattedTime} [${source}] ${message}`);
+  const logMessage = `${formattedTime} [${source}] ${message}`;
+  
+  // Выводим в консоль
+  console.log(logMessage);
+  
+  // Записываем в файл (асинхронно, не блокируя выполнение)
+  writeToLogFile(logMessage).catch(() => {
+    // Ошибка уже обработана в writeToLogFile
+  });
 }
 
 export async function setupVite(app: Express, server: Server) {

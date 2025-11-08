@@ -11,7 +11,10 @@ import {
   trainSalesModelFromExcel,
   TrainingError,
 } from '../utils/training';
+import { analyticsCache } from '../utils/analyticsCache';
 import type { Transaction } from '@shared/schema';
+import { log } from '../vite';
+import { matchForecastsWithActuals, updateModelAccuracyMetrics } from '../utils/forecastFeedback';
 
 const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const forecastUpload = multer({
@@ -80,16 +83,19 @@ function resolvePresetRange(
 
 export function registerAnalyticsRoutes(app: Express): void {
   app.get('/api/analytics/:uploadId', async (req, res) => {
+    const startTime = performance.now();
+    const { uploadId } = req.params;
+    
     try {
-      const { uploadId } = req.params;
-
       if (!uuidRe.test(uploadId)) {
         return res.status(400).json({
           error: 'Неверный формат ID. Ожидается UUID.',
         });
       }
 
+      const loadStartTime = performance.now();
       const transactions = await storage.getTransactionsByUploadId(uploadId);
+      const loadTime = (performance.now() - loadStartTime).toFixed(2);
 
       if (transactions.length === 0) {
         return res.status(404).json({
@@ -182,25 +188,302 @@ export function registerAnalyticsRoutes(app: Express): void {
             })
           : sortedTransactions;
 
-      const analytics = await calculateAnalytics(filteredTransactions);
+      // Проверяем параметр includeLLM (по умолчанию false для скорости)
+      const includeLLMParamRaw = req.query.includeLLM;
+      const includeLLM = includeLLMParamRaw === 'true' || includeLLMParamRaw === '1';
 
-      const period = {
-        from: (filterFrom ?? datasetStart).toISOString(),
-        to: (filterTo ?? datasetEnd).toISOString(),
-        ...(appliedPreset !== 'all' ? { preset: appliedPreset } : {}),
+      // Проверяем кеш перед вычислением аналитики
+      const baseCacheParams = {
+        preset: appliedPreset !== 'all' ? appliedPreset : undefined,
+        from: filterFrom?.toISOString(),
+        to: filterTo?.toISOString(),
+        includeLLM: false, // Базовая аналитика без LLM
+      };
+      
+      const llmCacheParams = {
+        ...baseCacheParams,
+        includeLLM: true, // Аналитика с LLM
       };
 
-      res.json({
-        ...analytics,
-        period,
-      });
+      // Если запрошен LLM и он готов, возвращаем его
+      if (includeLLM) {
+        const llmAnalytics = analyticsCache.get(uploadId, llmCacheParams);
+        const llmStatus = analyticsCache.getLLMStatus(uploadId, llmCacheParams);
+        
+        if (llmAnalytics && llmStatus?.status === 'completed') {
+          const period = {
+            from: (filterFrom ?? datasetStart).toISOString(),
+            to: (filterTo ?? datasetEnd).toISOString(),
+            ...(appliedPreset !== 'all' ? { preset: appliedPreset } : {}),
+          };
+          
+          const totalTime = (performance.now() - startTime).toFixed(2);
+          log(`📈 LLM аналитика из кеша для ${uploadId}: ${filteredTransactions.length} транзакций | Загрузка: ${loadTime}ms, Кеш: 0ms, Всего: ${totalTime}ms`, 'analytics');
+          
+          return res.json({
+            ...llmAnalytics,
+            period,
+          });
+        }
+      }
+      
+      // Проверяем базовую аналитику (без LLM)
+      let analytics = analyticsCache.get(uploadId, baseCacheParams);
+      let calcTime = '0';
+      
+      if (!analytics) {
+        // Вычисляем базовую аналитику (без LLM) для быстрого ответа
+        const calcStartTime = performance.now();
+        analytics = await calculateAnalytics(filteredTransactions, false, storage, uploadId);
+        calcTime = (performance.now() - calcStartTime).toFixed(2);
+        
+        const period = {
+          from: (filterFrom ?? datasetStart).toISOString(),
+          to: (filterTo ?? datasetEnd).toISOString(),
+          ...(appliedPreset !== 'all' ? { preset: appliedPreset } : {}),
+        };
+
+        // Сохраняем в кеш вместе с периодом
+        const analyticsWithPeriod = {
+          ...analytics,
+          period,
+        };
+        
+        analyticsCache.set(uploadId, baseCacheParams, analyticsWithPeriod);
+        
+        const totalTime = (performance.now() - startTime).toFixed(2);
+        log(`📈 Аналитика рассчитана для ${uploadId}: ${filteredTransactions.length} транзакций | Загрузка: ${loadTime}ms, Расчет: ${calcTime}ms, Всего: ${totalTime}ms`, 'analytics');
+        
+        // Автоматически сопоставляем прогнозы с реальными данными в фоне
+        setImmediate(async () => {
+          try {
+            await matchForecastsWithActuals(storage, uploadId, filteredTransactions);
+            await updateModelAccuracyMetrics(storage, uploadId);
+          } catch (error) {
+            console.error('[Analytics] Ошибка при сопоставлении прогнозов:', error);
+          }
+        });
+        
+        res.json(analyticsWithPeriod);
+      } else {
+        // Используем данные из кеша, но обновляем период на основе текущих параметров
+        const period = {
+          from: (filterFrom ?? datasetStart).toISOString(),
+          to: (filterTo ?? datasetEnd).toISOString(),
+          ...(appliedPreset !== 'all' ? { preset: appliedPreset } : {}),
+        };
+        
+        const totalTime = (performance.now() - startTime).toFixed(2);
+        log(`📈 Аналитика из кеша для ${uploadId}: ${filteredTransactions.length} транзакций | Загрузка: ${loadTime}ms, Кеш: 0ms, Всего: ${totalTime}ms`, 'analytics');
+        
+        res.json({
+          ...analytics,
+          period,
+        });
+      }
+
+      // Если запрошен LLM анализ, запускаем его асинхронно в фоне
+      if (includeLLM) {
+        const llmStatus = analyticsCache.getLLMStatus(uploadId, llmCacheParams);
+
+        // Если LLM анализ еще не запущен или не завершен, запускаем его
+        if (!llmStatus || (llmStatus.status !== 'completed' && llmStatus.status !== 'processing')) {
+          // Создаем запись с базовыми данными и статусом "processing" для отслеживания
+          const baseAnalytics = analyticsCache.get(uploadId, baseCacheParams);
+          if (baseAnalytics) {
+            // Сохраняем базовую аналитику с includeLLM: true и статусом "processing"
+            // Это позволит отслеживать статус через getLLMStatus
+            analyticsCache.set(uploadId, llmCacheParams, baseAnalytics);
+            analyticsCache.updateLLMStatus(uploadId, 'processing', undefined, undefined, llmCacheParams);
+          }
+
+          // Запускаем LLM анализ в фоне
+          setImmediate(async () => {
+            const llmStartTime = performance.now();
+            try {
+              log(`🚀 Запуск LLM анализа для ${uploadId} (транзакций: ${filteredTransactions.length})`, 'analytics');
+              
+              // Проверяем наличие API ключа перед запуском
+              // LLM всегда включен по умолчанию, если есть API ключ
+              const hasApiKey = !!process.env.OPENAI_API_KEY;
+              
+              if (!hasApiKey) {
+                log(`⚠️  LLM анализ пропущен: отсутствует OPENAI_API_KEY`, 'analytics');
+                analyticsCache.updateLLMStatus(
+                  uploadId,
+                  'failed',
+                  undefined,
+                  'OpenAI API key not configured',
+                  llmCacheParams
+                );
+                return;
+              }
+              
+              const llmAnalytics = await calculateAnalytics(filteredTransactions, true, storage, uploadId);
+              const llmDuration = performance.now() - llmStartTime;
+              
+              // Сохраняем LLM аналитику в кеш
+              analyticsCache.set(uploadId, llmCacheParams, llmAnalytics);
+              
+              // Обновляем статус на "completed"
+              analyticsCache.updateLLMStatus(uploadId, 'completed', llmAnalytics, undefined, llmCacheParams);
+              
+              log(`✅ LLM анализ завершен для ${uploadId} за ${llmDuration.toFixed(2)}ms`, 'analytics');
+            } catch (error) {
+              const llmDuration = performance.now() - llmStartTime;
+              const errorMessage = error instanceof Error ? error.message : String(error);
+              const errorStack = error instanceof Error ? error.stack : undefined;
+              
+              console.error(`❌ Ошибка LLM анализа для ${uploadId} (время: ${llmDuration.toFixed(2)}ms):`, errorMessage);
+              if (errorStack) {
+                console.error(`Стек ошибки:`, errorStack);
+              }
+              
+              analyticsCache.updateLLMStatus(
+                uploadId,
+                'failed',
+                undefined,
+                error instanceof Error ? error.message : String(error),
+                llmCacheParams
+              );
+            }
+          });
+        }
+      }
     } catch (error) {
-      console.error('Analytics error:', error);
+      const totalTime = (performance.now() - startTime).toFixed(2);
+      console.error(`❌ Ошибка аналитики для ${uploadId} (время: ${totalTime}ms):`, error);
       res.status(500).json({
         error: error instanceof Error ? error.message : 'Ошибка расчета аналитики',
       });
     }
   });
+
+  // Endpoint для проверки статуса LLM-анализа
+  app.get('/api/analytics/:uploadId/llm-status', async (req, res) => {
+    const { uploadId } = req.params;
+    
+    try {
+      if (!uuidRe.test(uploadId)) {
+        return res.status(400).json({
+          error: 'Неверный формат ID. Ожидается UUID.',
+        });
+      }
+
+      const transactions = await storage.getTransactionsByUploadId(uploadId);
+      if (transactions.length === 0) {
+        return res.status(404).json({
+          error: 'Данные не найдены.',
+        });
+      }
+
+      const sortedTransactions = [...transactions].sort(
+        (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
+      );
+
+      const datasetStart = startOfDay(new Date(sortedTransactions[0].date));
+      const datasetEnd = endOfDay(new Date(sortedTransactions[sortedTransactions.length - 1].date));
+
+      const presetParamRaw = req.query.preset;
+      const fromParamRaw = req.query.from;
+      const toParamRaw = req.query.to;
+
+      const presetParam = Array.isArray(presetParamRaw) ? presetParamRaw[0] : presetParamRaw;
+      const fromParam = Array.isArray(fromParamRaw) ? fromParamRaw[0] : fromParamRaw;
+      const toParam = Array.isArray(toParamRaw) ? toParamRaw[0] : toParamRaw;
+
+      let filterFrom: Date | undefined;
+      let filterTo: Date | undefined;
+      let appliedPreset: DateFilterPreset | 'custom' | 'all' = 'all';
+
+      if (typeof presetParam === 'string' && isDateFilterPreset(presetParam)) {
+        appliedPreset = presetParam;
+        const range = resolvePresetRange(presetParam, datasetStart, datasetEnd);
+        filterFrom = range.from;
+        filterTo = range.to;
+      }
+
+      const parseFromParam = () => {
+        if (!fromParam || typeof fromParam !== 'string') {
+          return undefined;
+        }
+        const parsed = startOfDay(new Date(fromParam));
+        return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+      };
+
+      const parseToParam = () => {
+        if (!toParam || typeof toParam !== 'string') {
+          return undefined;
+        }
+        const parsed = endOfDay(new Date(toParam));
+        return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+      };
+
+      if (presetParam === 'custom') {
+        appliedPreset = 'custom';
+        filterFrom = parseFromParam() ?? filterFrom;
+        filterTo = parseToParam() ?? filterTo;
+      }
+
+      if (!filterFrom && !filterTo) {
+        const parsedFrom = parseFromParam();
+        const parsedTo = parseToParam();
+        if (parsedFrom || parsedTo) {
+          appliedPreset = 'custom';
+          filterFrom = parsedFrom ?? filterFrom;
+          filterTo = parsedTo ?? filterTo;
+        }
+      }
+
+      const cacheParams = {
+        preset: appliedPreset !== 'all' ? appliedPreset : undefined,
+        from: filterFrom?.toISOString(),
+        to: filterTo?.toISOString(),
+        includeLLM: true,
+      };
+
+      const llmStatus = analyticsCache.getLLMStatus(uploadId, cacheParams);
+
+      if (!llmStatus) {
+        return res.json({
+          status: 'pending',
+          message: 'LLM анализ еще не запущен',
+        });
+      }
+
+      if (llmStatus.status === 'completed' && llmStatus.data) {
+        const period = {
+          from: (filterFrom ?? datasetStart).toISOString(),
+          to: (filterTo ?? datasetEnd).toISOString(),
+          ...(appliedPreset !== 'all' ? { preset: appliedPreset } : {}),
+        };
+
+        return res.json({
+          status: 'completed',
+          data: {
+            ...llmStatus.data,
+            period,
+          },
+        });
+      }
+
+      return res.json({
+        status: llmStatus.status,
+        error: llmStatus.error,
+        message: llmStatus.status === 'processing' 
+          ? 'LLM анализ выполняется...' 
+          : llmStatus.status === 'failed'
+          ? 'LLM анализ завершился с ошибкой'
+          : 'LLM анализ в ожидании',
+      });
+    } catch (error) {
+      console.error(`❌ Ошибка получения статуса LLM для ${uploadId}:`, error);
+      res.status(500).json({
+        error: error instanceof Error ? error.message : 'Ошибка получения статуса LLM',
+      });
+    }
+  });
+
 
   app.post(
     '/api/ml/forecast-turnover',
