@@ -106,6 +106,7 @@ export interface IStorage {
   upsertModelAccuracyMetric(metric: InsertModelAccuracyMetric): Promise<ModelAccuracyMetric>;
   getAllModelAccuracyMetrics(): Promise<ModelAccuracyMetric[]>;
   getModelAccuracyMetricsByModel(modelName: string): Promise<ModelAccuracyMetric[]>;
+  deleteModelAccuracyMetric(id: string): Promise<void>;
 }
 
 export interface CreateProfitabilityDatasetInput {
@@ -873,6 +874,10 @@ export class MemStorage implements IStorage {
 
   async getModelAccuracyMetricsByModel(modelName: string): Promise<ModelAccuracyMetric[]> {
     return Array.from(this.modelAccuracyMetrics.values()).filter((m) => m.modelName === modelName);
+  }
+
+  async deleteModelAccuracyMetric(id: string): Promise<void> {
+    this.modelAccuracyMetrics.delete(id);
   }
 
   /**

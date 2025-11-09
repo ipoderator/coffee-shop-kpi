@@ -45,6 +45,14 @@ interface Recommendation {
     timeframe: string;
   };
   category?: 'margin' | 'revenue' | 'costs' | 'operations' | 'pricing';
+  products?: Array<{
+    name: string;
+    margin: number;
+    loss: number;
+    price: number;
+    cost: number;
+    salesCount: number;
+  }>;
 }
 
 const formatCurrency = (value: number) => {
@@ -316,20 +324,47 @@ function FinancialRecommendationsComponent({
 
     // Анализ позиций с негативной маржой
     if (topProductsData.negativeMarginProducts.length > 0) {
-      const totalLoss = topProductsData.negativeMarginProducts.reduce(
+      const negativeProducts = topProductsData.negativeMarginProducts;
+      const totalLoss = negativeProducts.reduce(
         (sum, p) => sum + Math.abs(p.totalProfit),
         0,
       );
+      
+      // Проверка расчетов: убеждаемся, что totalProfit отрицательный для убыточных позиций
+      // totalProfit = totalRevenue - totalCost, где totalRevenue = averagePrice * salesCount
+      // Для убыточных позиций: totalProfit < 0, значит totalCost > totalRevenue
+      
+      // Формируем список позиций с деталями
+      const productsDetails = negativeProducts.map((p) => {
+        const loss = Math.abs(p.totalProfit); // Убыток (положительное число)
+        return {
+          name: p.itemName,
+          margin: p.averageMargin, // Отрицательная маржа в %
+          loss: loss, // Убыток в рублях
+          price: p.averagePrice, // Средняя цена продажи
+          cost: p.unitCost, // Себестоимость за единицу
+          salesCount: p.salesCount, // Количество продаж
+        };
+      });
+      
+      // Формируем описание с перечислением позиций
+      const productsList = negativeProducts.length === 1
+        ? `"${negativeProducts[0].itemName}"`
+        : negativeProducts.length <= 3
+          ? negativeProducts.map((p) => `"${p.itemName}"`).join(', ')
+          : `${negativeProducts.slice(0, 2).map((p) => `"${p.itemName}"`).join(', ')} и еще ${negativeProducts.length - 2} позиций`;
+      
       recs.push({
         type: 'error',
         priority: 'high',
         title: 'Позиции с убыточной маржой',
-        description: `Обнаружено ${topProductsData.negativeMarginProducts.length} позиций с отрицательной маржой, которые генерируют убыток ${formatCurrency(
+        description: `Обнаружено ${negativeProducts.length} позиций с отрицательной маржой, которые генерируют убыток ${formatCurrency(
           totalLoss,
-        )}.`,
+        )}. Позиции: ${productsList}.`,
         action:
           'Немедленно пересмотрите цены или себестоимость этих позиций. Либо поднимите цены, либо найдите более дешевых поставщиков, либо исключите эти позиции из ассортимента.',
         impact: `Устранение убыточных позиций добавит ${formatCurrency(totalLoss)} к прибыли.`,
+        products: productsDetails,
       });
     }
 
@@ -776,6 +811,68 @@ function FinancialRecommendationsComponent({
                     </div>
                   )}
 
+                  {rec.products && rec.products.length > 0 && (
+                    <div className="bg-destructive/10 dark:bg-destructive/20 border border-destructive/30 p-4 rounded-md space-y-3">
+                      <p className="text-xs font-semibold flex items-center gap-2 text-destructive">
+                        <AlertCircle className="w-4 h-4" />
+                        Детали убыточных позиций:
+                      </p>
+                      <div className="space-y-2">
+                        {rec.products.map((product, idx) => {
+                          // Проверка расчетов: 
+                          // В бэкенде: totalProfit = totalRevenue - totalCost
+                          // где totalRevenue = sum(всех цен продаж), totalCost = sum(всех себестоимостей)
+                          // При использовании средних: totalProfit ≈ (averagePrice - unitCost) * salesCount
+                          // Убыток = |totalProfit|, где totalProfit < 0
+                          // Проверяем приблизительное соответствие (с учетом возможных вариаций цен)
+                          const estimatedLoss = (product.cost - product.price) * product.salesCount;
+                          const lossMatches = Math.abs(estimatedLoss - product.loss) < (product.loss * 0.05 + 1); // Допустимая погрешность 5% или 1 рубль
+                          
+                          return (
+                            <div
+                              key={idx}
+                              className="bg-background/50 p-3 rounded border border-destructive/20 space-y-1.5"
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <p className="font-semibold text-sm text-foreground">
+                                  {product.name}
+                                </p>
+                                <Badge variant="destructive" className="text-xs">
+                                  Убыток: {formatCurrency(product.loss)}
+                                </Badge>
+                              </div>
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                                <div>
+                                  <p className="text-muted-foreground">Маржа:</p>
+                                  <p className="font-semibold text-destructive">
+                                    {formatPercent(product.margin / 100)}
+                                  </p>
+                                </div>
+                                <div>
+                                  <p className="text-muted-foreground">Цена продажи:</p>
+                                  <p className="font-semibold">{formatCurrency(product.price)}</p>
+                                </div>
+                                <div>
+                                  <p className="text-muted-foreground">Себестоимость:</p>
+                                  <p className="font-semibold">{formatCurrency(product.cost)}</p>
+                                </div>
+                                <div>
+                                  <p className="text-muted-foreground">Продаж:</p>
+                                  <p className="font-semibold">{product.salesCount} шт.</p>
+                                </div>
+                              </div>
+                              {!lossMatches && (
+                                <p className="text-xs text-amber-600 dark:text-amber-400 italic">
+                                  ⚠️ Проверка: расчет убытка может отличаться от ожидаемого
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="space-y-2">
                     <div className="flex items-start gap-2">
                       <Lightbulb className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
@@ -875,6 +972,68 @@ function FinancialRecommendationsComponent({
                             </p>
                           </div>
                         ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {rec.products && rec.products.length > 0 && (
+                    <div className="bg-destructive/10 dark:bg-destructive/20 border border-destructive/30 p-4 rounded-md space-y-3">
+                      <p className="text-xs font-semibold flex items-center gap-2 text-destructive">
+                        <AlertCircle className="w-4 h-4" />
+                        Детали убыточных позиций:
+                      </p>
+                      <div className="space-y-2">
+                        {rec.products.map((product, idx) => {
+                          // Проверка расчетов: 
+                          // В бэкенде: totalProfit = totalRevenue - totalCost
+                          // где totalRevenue = sum(всех цен продаж), totalCost = sum(всех себестоимостей)
+                          // При использовании средних: totalProfit ≈ (averagePrice - unitCost) * salesCount
+                          // Убыток = |totalProfit|, где totalProfit < 0
+                          // Проверяем приблизительное соответствие (с учетом возможных вариаций цен)
+                          const estimatedLoss = (product.cost - product.price) * product.salesCount;
+                          const lossMatches = Math.abs(estimatedLoss - product.loss) < (product.loss * 0.05 + 1); // Допустимая погрешность 5% или 1 рубль
+                          
+                          return (
+                            <div
+                              key={idx}
+                              className="bg-background/50 p-3 rounded border border-destructive/20 space-y-1.5"
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <p className="font-semibold text-sm text-foreground">
+                                  {product.name}
+                                </p>
+                                <Badge variant="destructive" className="text-xs">
+                                  Убыток: {formatCurrency(product.loss)}
+                                </Badge>
+                              </div>
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                                <div>
+                                  <p className="text-muted-foreground">Маржа:</p>
+                                  <p className="font-semibold text-destructive">
+                                    {formatPercent(product.margin / 100)}
+                                  </p>
+                                </div>
+                                <div>
+                                  <p className="text-muted-foreground">Цена продажи:</p>
+                                  <p className="font-semibold">{formatCurrency(product.price)}</p>
+                                </div>
+                                <div>
+                                  <p className="text-muted-foreground">Себестоимость:</p>
+                                  <p className="font-semibold">{formatCurrency(product.cost)}</p>
+                                </div>
+                                <div>
+                                  <p className="text-muted-foreground">Продаж:</p>
+                                  <p className="font-semibold">{product.salesCount} шт.</p>
+                                </div>
+                              </div>
+                              {!lossMatches && (
+                                <p className="text-xs text-amber-600 dark:text-amber-400 italic">
+                                  ⚠️ Проверка: расчет убытка может отличаться от ожидаемого
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   )}

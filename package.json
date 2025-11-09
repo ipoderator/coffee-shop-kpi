@@ -9,7 +9,9 @@
     "start": "NODE_ENV=production node dist/index.js",
     "check": "tsc",
     "lint": "eslint . --ext .ts,.tsx",
-    "db:push": "drizzle-kit push"
+    "db:push": "drizzle-kit push",
+    "install-python-deps": "pip install -r scripts/requirements.txt",
+    "check-api-keys": "tsx scripts/checkApiKeys.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
