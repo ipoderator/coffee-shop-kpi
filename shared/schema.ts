@@ -1120,3 +1120,29 @@ export const insertModelAccuracyMetricSchema = createInsertSchema(modelAccuracyM
 
 export type InsertModelAccuracyMetric = z.infer<typeof insertModelAccuracyMetricSchema>;
 export type ModelAccuracyMetric = typeof modelAccuracyMetrics.$inferSelect;
+
+// ML Models (ml_models) — персистентное хранение обученных ML моделей
+export const mlModels = pgTable('ml_models', {
+  id: varchar('id')
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  modelName: varchar('model_name').notNull(), // ARIMA, Prophet, LSTM, GRU, RandomForest, XGBoost, GradientBoosting, NHITS
+  uploadId: varchar('upload_id').notNull(), // Связь с данными
+  dataHash: varchar('data_hash').notNull(), // Хеш данных для проверки актуальности
+  parameters: jsonb('parameters').notNull(), // Сериализованные параметры модели
+  dataLength: integer('data_length').notNull(), // Количество точек данных
+  lastDataDate: timestamp('last_data_date'), // Дата последней точки данных
+  trainedAt: timestamp('trained_at').defaultNow().notNull(),
+  lastUsedAt: timestamp('last_used_at').defaultNow().notNull(),
+  version: integer('version').default(1), // Версия модели для миграций
+  supportsIncremental: boolean('supports_incremental').default(false), // Поддержка инкрементального обучения
+});
+
+export const insertMLModelSchema = createInsertSchema(mlModels).omit({
+  id: true,
+  trainedAt: true,
+  lastUsedAt: true,
+});
+
+export type InsertMLModel = z.infer<typeof insertMLModelSchema>;
+export type MLModel = typeof mlModels.$inferSelect;

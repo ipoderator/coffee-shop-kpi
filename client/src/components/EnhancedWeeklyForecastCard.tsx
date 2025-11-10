@@ -135,7 +135,10 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
     const allDays = nextMonth.dailyForecast;
 
     // Анализ сезонности по дням недели
-    const dayOfWeekAnalysis = [0, 1, 2, 3, 4, 5, 6].map((dayIndex) => {
+    // Порядок дней: Пн, Вт, Ср, Чт, Пт, Сб, Вс (как принято в России)
+    const dayOrder = [1, 2, 3, 4, 5, 6, 0]; // Пн=1, Вт=2, ..., Вс=0
+    const dayNames = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+    const dayOfWeekAnalysis = dayOrder.map((dayIndex, orderIndex) => {
       const dayData = allDays.filter((day) => new Date(day.date).getDay() === dayIndex);
       const avgRevenue =
         dayData.reduce((sum, day) => sum + day.predictedRevenue, 0) / dayData.length;
@@ -147,11 +150,12 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
         .sort((a, b) => a.getTime() - b.getTime())
         .slice(0, 3); // Берем первые 3 даты
 
-      // Форматируем даты в формат ДД.ММ
+      // Форматируем даты в читаемый формат (например, "16 ноя" или "16 ноября")
+      const monthNames = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
       const formattedDates = sortedDates.map((date) => {
-        const day = date.getDate().toString().padStart(2, '0');
-        const month = (date.getMonth() + 1).toString().padStart(2, '0');
-        return `${day}.${month}`;
+        const day = date.getDate();
+        const month = monthNames[date.getMonth()];
+        return `${day} ${month}`;
       });
 
       // Вычисляем статистику
@@ -168,7 +172,8 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
 
       return {
         dayIndex,
-        dayName: ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'][dayIndex],
+        displayOrder: orderIndex, // Порядок отображения: 0=Пн, 1=Вт, ..., 6=Вс
+        dayName: dayNames[orderIndex],
         avgRevenue,
         avgConfidence,
         count: dayData.length,
@@ -179,24 +184,54 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
       };
     });
 
-    // Анализ корреляций с ML факторами
+    // Расчет прямого влияния факторов на прогноз
+    // Используем веса факторов из ML модели вместо корреляции Пирсона
+    const revenues = allDays.map(day => day.predictedRevenue);
+    const avgRevenue = revenues.reduce((a, b) => a + b, 0) / revenues.length;
+    
+    // Веса факторов из ML модели (из enhancedMLForecasting.ts)
+    // Обновлены веса для отражения значительно увеличенного влияния праздников
+    const isSmallDataset = allDays.length < 30;
+    const factorWeights = {
+      seasonal: isSmallDataset ? 0.30 : 0.25, // Обновлено для соответствия новой модели
+      trend: isSmallDataset ? 0.15 : 0.18,
+      weather: isSmallDataset ? 0.15 : 0.18, // Обновлено для соответствия новой модели
+      holiday: isSmallDataset ? 0.22 : 0.25, // Значительно увеличено с 0.12/0.15 до 0.22/0.25 (+83%/+67%)
+    };
+
+    // Расчет прямого влияния факторов на прогноз
+    // Влияние = среднее абсолютное значение фактора * вес * средняя выручка
+    const weatherImpacts = allDays.map(day => day.weatherImpact || 0);
+    const holidayImpacts = allDays.map(day => day.holidayImpact || 0);
+    const seasonalFactors = allDays.map(day => {
+      const seasonality = day.factors?.seasonality || 1;
+      // Преобразуем множитель в влияние: (seasonality - 1) показывает отклонение от базового уровня
+      return seasonality - 1;
+    });
+    const trendFactors = allDays.map(day => day.factors?.trend || 0);
+
+    // Среднее абсолютное влияние каждого фактора
+    const avgWeatherImpact = weatherImpacts.reduce((sum, val) => sum + Math.abs(val), 0) / weatherImpacts.length;
+    
+    // Улучшенный расчет влияния праздников: учитываем максимальное влияние и дни с праздниками
+    const holidayDays = allDays.filter(day => day.holidayImpact && Math.abs(day.holidayImpact) > 0.01);
+    const maxHolidayImpact = holidayImpacts.length > 0 ? Math.max(...holidayImpacts.map(Math.abs)) : 0;
+    const avgHolidayImpact = holidayImpacts.reduce((sum, val) => sum + Math.abs(val), 0) / holidayImpacts.length;
+    // Используем взвешенное среднее: если есть праздники, учитываем их максимальное влияние
+    const effectiveHolidayImpact = holidayDays.length > 0 
+      ? Math.max(avgHolidayImpact, maxHolidayImpact * 0.6) // Учитываем максимальное влияние
+      : avgHolidayImpact;
+    
+    const avgSeasonalImpact = seasonalFactors.reduce((sum, val) => sum + Math.abs(val), 0) / seasonalFactors.length;
+    const avgTrendImpact = trendFactors.reduce((sum, val) => sum + Math.abs(val), 0) / trendFactors.length;
+
+    // Расчет влияния в рублях: влияние фактора * вес * средняя выручка
+    // Для праздников используем эффективное влияние, которое лучше отражает их реальный эффект
     const correlations = {
-      weatherRevenue:
-        allDays.reduce((sum, day) => {
-          return sum + (day.weatherImpact || 0) * day.predictedRevenue;
-        }, 0) / allDays.length,
-      holidayRevenue:
-        allDays.reduce((sum, day) => {
-          return sum + (day.holidayImpact || 0) * day.predictedRevenue;
-        }, 0) / allDays.length,
-      seasonalRevenue:
-        allDays.reduce((sum, day) => {
-          return sum + (day.factors?.seasonality || 1) * day.predictedRevenue;
-        }, 0) / allDays.length,
-      trendRevenue:
-        allDays.reduce((sum, day) => {
-          return sum + (day.factors?.trend || 0) * day.predictedRevenue;
-        }, 0) / allDays.length,
+      weatherRevenue: Math.abs(avgWeatherImpact) * factorWeights.weather * avgRevenue,
+      holidayRevenue: Math.abs(effectiveHolidayImpact) * factorWeights.holiday * avgRevenue,
+      seasonalRevenue: Math.abs(avgSeasonalImpact) * factorWeights.seasonal * avgRevenue,
+      trendRevenue: Math.abs(avgTrendImpact) * factorWeights.trend * avgRevenue,
     };
 
     // Анализ трендов с ML
@@ -207,8 +242,7 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
         ? ((revenueTrend[revenueTrend.length - 1] - revenueTrend[0]) / revenueTrend[0]) / revenueTrend.length
         : 0;
 
-    // Анализ волатильности
-    const avgRevenue = revenueTrend.reduce((sum, rev) => sum + rev, 0) / revenueTrend.length;
+    // Анализ волатильности (используем уже вычисленный avgRevenue)
     const variance =
       revenueTrend.reduce((sum, rev) => sum + Math.pow(rev - avgRevenue, 2), 0) /
       revenueTrend.length;
@@ -239,6 +273,14 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
         const gruFactors = allDays.map((day) => day.factors?.seasonality || 1);
         const gruAvg = gruFactors.reduce((sum, f) => sum + f, 0) / gruFactors.length;
         return Math.max(0, Math.min(1, 0.5 + (1 - Math.abs(gruAvg - 1)) * 0.5));
+      })(),
+      nhits: backendModelQuality.nhits ?? (() => {
+        // NHITS хорошо работает с трендами и сезонностью
+        const nhitsTrendFactors = allDays.map((day) => day.factors?.trend || 0);
+        const nhitsSeasonFactors = allDays.map((day) => day.factors?.seasonality || 1);
+        const trendAvg = nhitsTrendFactors.reduce((sum, f) => sum + Math.abs(f), 0) / nhitsTrendFactors.length;
+        const seasonAvg = nhitsSeasonFactors.reduce((sum, f) => sum + f, 0) / nhitsSeasonFactors.length;
+        return Math.max(0, Math.min(1, 0.5 + (trendAvg * 0.3 + (1 - Math.abs(seasonAvg - 1)) * 0.2)));
       })(),
       llm: backendModelQuality.llm ?? 0, // Используем метрики из бэкенда для LLM
     };
@@ -664,7 +706,7 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
             <div>
               <h3 className="text-lg font-semibold mb-4">Анализ по дням недели</h3>
               <div className="grid grid-cols-1 md:grid-cols-7 gap-3">
-                {deepAnalytics.dayOfWeekAnalysis.map((day) => {
+                {[...deepAnalytics.dayOfWeekAnalysis].sort((a, b) => (a.displayOrder ?? a.dayIndex) - (b.displayOrder ?? b.dayIndex)).map((day) => {
                   // Определяем лучший и худший день для цветовой индикации
                   const allRevenues = deepAnalytics.dayOfWeekAnalysis.map((d) => d.avgRevenue);
                   const maxRevenue = Math.max(...allRevenues);
@@ -687,9 +729,9 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
                       
                       {/* Даты под названием дня */}
                       {day.dates && day.dates.length > 0 && (
-                        <div className="text-xs text-gray-400 mb-2 space-y-0.5">
+                        <div className="text-sm font-medium text-muted-foreground mb-2 space-y-1">
                           {day.dates.map((date, idx) => (
-                            <div key={idx}>{date}</div>
+                            <div key={idx} className="leading-tight">{date}</div>
                           ))}
                         </div>
                       )}
@@ -763,7 +805,8 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
                     typeof deepAnalytics.trendSlope === 'number' && isFinite(deepAnalytics.trendSlope)
                       ? Math.abs(deepAnalytics.trendSlope * 100)
                       : 0;
-                  const trendNormalized = Math.min(trendPercent / 10, 1); // Нормализуем тренд
+                  // Улучшенная нормализация тренда: делитель увеличен с 10 до 5 для более точного отображения
+                  const trendNormalized = Math.min(trendPercent / 5, 1); // Нормализуем тренд
 
                   return (
                     <>
@@ -860,7 +903,7 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
             {/* ML Модели */}
             <div>
               <h3 className="text-lg font-semibold mb-4">Качество ML моделей</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {[
                   {
                     name: 'ARIMA',
@@ -891,6 +934,13 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
                     color: 'orange',
                   },
                   {
+                    name: 'NHITS',
+                    quality: Math.abs(deepAnalytics.mlModelQuality.nhits ?? 0.5),
+                    icon: <Activity className="h-5 w-5 text-teal-500" />,
+                    description: 'Нейросетевая иерархическая модель',
+                    color: 'teal',
+                  },
+                  {
                     name: 'LLM',
                     quality: Math.abs(deepAnalytics.mlModelQuality.llm ?? 0),
                     icon: <Brain className="h-5 w-5 text-indigo-500" />,
@@ -908,6 +958,7 @@ export function EnhancedWeeklyForecastCard({ forecast }: EnhancedWeeklyForecastC
                     blue: 'bg-blue-500',
                     green: 'bg-green-500',
                     orange: 'bg-orange-500',
+                    teal: 'bg-teal-500',
                     indigo: 'bg-indigo-500',
                   };
                   

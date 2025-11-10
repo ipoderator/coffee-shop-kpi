@@ -1,0 +1,47 @@
+# Coffee KPI Dashboard - Dockerfile для разработки
+# Использует volumes для hot reload без пересборки
+
+FROM node:20-alpine
+
+# Установка системных зависимостей
+RUN apk add --no-cache \
+    postgresql-client \
+    curl \
+    bash \
+    python3 \
+    make \
+    g++ \
+    && rm -rf /var/cache/apk/*
+
+# Создание рабочей директории
+WORKDIR /app
+
+# Копирование только package.json для установки зависимостей
+COPY package*.json ./
+
+# Установка всех зависимостей (включая dev)
+RUN npm ci --legacy-peer-deps && \
+    npm cache clean --force
+
+# Копирование entrypoint скрипта
+COPY docker-entrypoint.sh ./docker-entrypoint.sh
+RUN chmod +x ./docker-entrypoint.sh
+
+# Создание директории для логов
+RUN mkdir -p /app/logs
+
+# Открытие порта
+EXPOSE 5001
+
+# Переменные окружения для разработки
+ENV NODE_ENV=development
+ENV PORT=5001
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:5001/ || exit 1
+
+# Использование entrypoint скрипта
+ENTRYPOINT ["./docker-entrypoint.sh"]
+CMD ["npm", "run", "dev"]
+

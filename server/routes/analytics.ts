@@ -254,11 +254,47 @@ export function registerAnalyticsRoutes(app: Express): void {
         const totalTime = (performance.now() - startTime).toFixed(2);
         log(`📈 Аналитика рассчитана для ${uploadId}: ${filteredTransactions.length} транзакций | Загрузка: ${loadTime}ms, Расчет: ${calcTime}ms, Всего: ${totalTime}ms`, 'analytics');
         
-        // Автоматически сопоставляем прогнозы с реальными данными в фоне
+        // Автоматически сопоставляем прогнозы с реальными данными и переобучаем модели в фоне
         setImmediate(async () => {
           try {
             await matchForecastsWithActuals(storage, uploadId, filteredTransactions);
             await updateModelAccuracyMetrics(storage, uploadId);
+            
+            // Переобучение моделей ансамбля на реальных данных
+            try {
+              const { EnhancedMLForecastingEngine } = await import('../utils/enhancedMLForecasting');
+              const { getExternalDataService } = await import('../utils/externalDataSources');
+              
+              // Получаем все транзакции для этого uploadId для переобучения
+              const allTransactions = await storage.getTransactionsByUploadId(uploadId);
+              
+              if (allTransactions.length >= 14) {
+                const externalDataService = getExternalDataService();
+                const mlEngine = new EnhancedMLForecastingEngine(
+                  allTransactions,
+                  externalDataService,
+                  undefined, // profitabilityRecords
+                  false, // useLLM - отключаем для фонового переобучения
+                  storage,
+                  uploadId,
+                );
+                
+                const retrainResult = await mlEngine.retrainEnsembleModelsOnActuals(allTransactions);
+                if (retrainResult.success) {
+                  log(
+                    `✅ Модели переобучены: ${retrainResult.modelsRetrained} моделей, точность: ${retrainResult.averageAccuracy.toFixed(3)}`,
+                    'ml-training',
+                  );
+                } else {
+                  log(
+                    `⚠️ Переобучение моделей не удалось: ${retrainResult.errors.join(', ')}`,
+                    'ml-training',
+                  );
+                }
+              }
+            } catch (retrainError) {
+              console.error('[Analytics] Ошибка при переобучении моделей:', retrainError);
+            }
           } catch (error) {
             console.error('[Analytics] Ошибка при сопоставлении прогнозов:', error);
           }

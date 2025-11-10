@@ -114,10 +114,11 @@ CHANGELOG*
 LICENSE*
 CONTRIBUTING*
 
-# Docker files
+# Docker files (но не entrypoint скрипт)
 Dockerfile*
 docker-compose*
 .dockerignore
+!docker-entrypoint.sh
 
 # CI/CD
 .github/

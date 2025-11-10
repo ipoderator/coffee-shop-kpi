@@ -951,6 +951,9 @@ function parseDetailedSalesFormat({
     }
   });
 
+  // Определяем, была ли найдена колонка себестоимости
+  const hasCostColumn = columnMap.cost !== undefined;
+  
   const records = Array.from(recordMap.values())
     .map(({ record, cogsIncome, cogsReturn, cogsCorrection }) => {
       // Расчет общей себестоимости по смене:
@@ -961,7 +964,9 @@ function parseDetailedSalesFormat({
         // Себестоимость сохраняется для последующего расчета прибыли:
         // Прибыль = Выручка - Себестоимость
         // Валовая маржа = (Выручка - Себестоимость) / Выручка × 100
-        cogsTotal: cogsTotal !== 0 ? cogsTotal : undefined,
+        // Сохраняем себестоимость только если колонка была найдена в файле
+        // (даже если значение равно 0, это может быть валидное значение)
+        cogsTotal: hasCostColumn ? cogsTotal : undefined,
       };
     })
     .sort((a, b) => a.reportDate.getTime() - b.reportDate.getTime());
@@ -978,6 +983,11 @@ function parseDetailedSalesFormat({
   }
 
   // Добавляем предупреждения о важных колонках
+  if (columnMap.cost === undefined) {
+    warnings.push(
+      'Колонка "Себестоимость" не найдена. Прибыль и маржа не будут рассчитаны. Убедитесь, что в файле есть колонка с названием "себестоимость", "себестоимость позиции", "себестоимость товара", "с/с" или "cost".',
+    );
+  }
   if (columnMap.priceWithDiscount === undefined) {
     warnings.push(
       'Колонка "Цена со скидкой" не найдена. Выручка рассчитывается как цена - скидка - бонусы.',

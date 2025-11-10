@@ -1,22 +1,22 @@
-# Coffee KPI Dashboard - Docker Compose
-# Полная настройка с базой данных и приложением
+# Coffee KPI Dashboard - Docker Compose для разработки
+# Использует volumes для hot reload - изменения применяются автоматически без пересборки
 
 version: '3.8'
 
 services:
-  # Основное приложение
+  # Основное приложение (режим разработки)
   app:
     build:
       context: .
-      dockerfile: Dockerfile
-    container_name: coffee-kpi-app
+      dockerfile: Dockerfile.dev
+    container_name: coffee-kpi-app-dev
     ports:
       - '5001:5001'
     environment:
-      - NODE_ENV=production
+      - NODE_ENV=development
       - DATABASE_URL=postgresql://coffee_user:coffee_password@db:5432/coffee_kpi
       - PORT=5001
-      # JWT Secret
+      # JWT Secret (используется для аутентификации)
       - JWT_SECRET=${JWT_SECRET:-jhvCtDzJY4fjCMlfK6YOWkKt4pFffSwJLxHCzkagN1E=}
       # Опциональные переменные окружения для внешних API
       # Раскомментируйте и заполните при необходимости:
@@ -28,6 +28,21 @@ services:
       db:
         condition: service_healthy
     volumes:
+      # Монтируем исходный код для hot reload
+      # Изменения в этих файлах применяются автоматически
+      - ./client:/app/client
+      - ./server:/app/server
+      - ./shared:/app/shared
+      - ./vite.config.ts:/app/vite.config.ts
+      - ./tailwind.config.ts:/app/tailwind.config.ts
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./postcss.config.js:/app/postcss.config.js
+      - ./drizzle.config.ts:/app/drizzle.config.ts
+      - ./package.json:/app/package.json
+      - ./package-lock.json:/app/package-lock.json
+      # node_modules не монтируем (используем из контейнера для производительности)
+      - /app/node_modules
+      # Логи
       - ./logs:/app/logs
     restart: unless-stopped
     networks:
@@ -37,19 +52,19 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 20s
 
-  # База данных PostgreSQL
+  # База данных PostgreSQL (отдельная для dev)
   db:
     image: postgres:15-alpine
-    container_name: coffee-kpi-db
+    container_name: coffee-kpi-db-dev
     environment:
       - POSTGRES_DB=coffee_kpi
       - POSTGRES_USER=coffee_user
       - POSTGRES_PASSWORD=coffee_password
       - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data_dev:/var/lib/postgresql/data
       - ./sql:/docker-entrypoint-initdb.d
     ports:
       - '5432:5432'
@@ -63,44 +78,11 @@ services:
       retries: 5
       start_period: 30s
 
-  # Nginx reverse proxy (опционально)
-  nginx:
-    image: nginx:alpine
-    container_name: coffee-kpi-nginx
-    ports:
-      - '80:80'
-      - '443:443'
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./ssl:/etc/nginx/ssl:ro
-    depends_on:
-      - app
-    restart: unless-stopped
-    networks:
-      - coffee-network
-    profiles:
-      - production
-
-  # Redis для кеширования (опционально)
-  redis:
-    image: redis:7-alpine
-    container_name: coffee-kpi-redis
-    ports:
-      - '6379:6379'
-    volumes:
-      - redis_data:/data
-    restart: unless-stopped
-    networks:
-      - coffee-network
-    profiles:
-      - production
-
 volumes:
-  postgres_data:
-    driver: local
-  redis_data:
+  postgres_data_dev:
     driver: local
 
 networks:
   coffee-network:
     driver: bridge
+

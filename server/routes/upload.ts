@@ -130,6 +130,44 @@ export function registerUploadRoutes(app: Express): void {
       };
 
       res.json(response);
+
+      // Автоматическое переобучение моделей на новых данных в фоне
+      setImmediate(async () => {
+        try {
+          // Получаем все транзакции для этого uploadId
+          const allTransactions = await storage.getTransactionsByUploadId(uploadId);
+          
+          if (allTransactions.length >= 14) {
+            const { EnhancedMLForecastingEngine } = await import('../utils/enhancedMLForecasting');
+            const { getExternalDataService } = await import('../utils/externalDataSources');
+            
+            const externalDataService = getExternalDataService();
+            const mlEngine = new EnhancedMLForecastingEngine(
+              allTransactions,
+              externalDataService,
+              undefined, // profitabilityRecords
+              false, // useLLM - отключаем для фонового переобучения
+              storage,
+              uploadId,
+            );
+            
+            const retrainResult = await mlEngine.retrainEnsembleModelsOnActuals(allTransactions);
+            if (retrainResult.success) {
+              log(
+                `✅ Модели переобучены после загрузки: ${retrainResult.modelsRetrained} моделей, точность: ${retrainResult.averageAccuracy.toFixed(3)}`,
+                'ml-training',
+              );
+            } else {
+              log(
+                `⚠️ Переобучение моделей после загрузки не удалось: ${retrainResult.errors.join(', ')}`,
+                'ml-training',
+              );
+            }
+          }
+        } catch (error) {
+          console.error('[Upload] Ошибка при переобучении моделей:', error);
+        }
+      });
     } catch (error) {
       const totalTime = (performance.now() - startTime).toFixed(2);
       console.error(`❌ Ошибка загрузки файла ${fileName} (время: ${totalTime}ms):`, error);

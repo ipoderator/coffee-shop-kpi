@@ -499,7 +499,12 @@ export async function calculateTopProducts(
   // Используем сохраненные значения бонусов и скидок из dataset
   let totalBonuses = dataset.dataset.totalBonuses ?? 0;
   let totalDiscounts = dataset.dataset.totalDiscounts ?? 0;
-  let totalBonusAccrued = 0;
+  let totalBonusAccrued = dataset.dataset.totalBonusAccrued ?? 0;
+  
+  // Логируем если fileBuffer отсутствует (для диагностики)
+  if (!fileBuffer) {
+    console.warn(`[topProducts] fileBuffer отсутствует для datasetId=${datasetId}. Топ-5 продуктов не будет рассчитан.`);
+  }
 
   // Если применены фильтры по датам, пересчитываем бонусы и скидки пропорционально
   if (from || to) {

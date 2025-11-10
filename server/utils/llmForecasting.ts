@@ -87,7 +87,6 @@ export class LLMForecastingEngine {
     
     // Базовая валидация формата API ключа (должен начинаться с sk-)
     if (!this.config.apiKey.startsWith('sk-')) {
-      console.warn('[LLM Forecast] ⚠️  API ключ OpenAI имеет неверный формат (должен начинаться с sk-)');
       return false;
     }
     

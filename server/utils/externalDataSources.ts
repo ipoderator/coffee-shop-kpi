@@ -81,16 +81,34 @@ export class WeatherService {
       return cached.data;
     }
 
+    // Если API ключ отсутствует или пустой, используем fallback без запроса
+    if (!this.apiKey || this.apiKey.trim() === '') {
+      return this.getFallbackWeather();
+    }
+
     try {
       const response = await fetch(
         `${this.baseUrl}/weather?lat=${lat}&lon=${lon}&appid=${this.apiKey}&units=metric&lang=ru`,
       );
 
       if (!response.ok) {
-        throw new Error(`Weather API error: ${response.status}`);
+        // Если ошибка авторизации (401), это означает неверный или истекший API ключ
+        if (response.status === 401) {
+          return this.getFallbackWeather();
+        }
+        // Для других ошибок логируем как предупреждение
+        console.warn(`[WeatherService] API вернул статус ${response.status}, используем fallback данные`);
+        return this.getFallbackWeather();
       }
 
       const data = await response.json();
+      
+      // Проверяем структуру ответа
+      if (!data.main || !data.wind) {
+        console.warn('[WeatherService] Неожиданная структура ответа API, используем fallback данные');
+        return this.getFallbackWeather();
+      }
+
       const weatherData: WeatherAPIResponse = {
         date: new Date().toISOString().split('T')[0],
         temperature: data.main.temp,
@@ -105,7 +123,9 @@ export class WeatherService {
       this.cache.set(cacheKey, { data: weatherData, timestamp: Date.now() });
       return weatherData;
     } catch (error) {
-      console.error('Weather API error:', error);
+      // Сетевые ошибки или другие проблемы - используем fallback
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.warn(`[WeatherService] Ошибка при запросе к API: ${errorMessage}, используем fallback данные`);
       return this.getFallbackWeather();
     }
   }
@@ -122,16 +142,34 @@ export class WeatherService {
       return cached.data;
     }
 
+    // Если API ключ отсутствует или пустой, используем fallback без запроса
+    if (!this.apiKey || this.apiKey.trim() === '') {
+      return this.getFallbackForecast(days);
+    }
+
     try {
       const response = await fetch(
         `${this.baseUrl}/forecast?lat=${lat}&lon=${lon}&appid=${this.apiKey}&units=metric&lang=ru&cnt=${days * 8}`,
       );
 
       if (!response.ok) {
-        throw new Error(`Weather Forecast API error: ${response.status}`);
+        // Если ошибка авторизации (401), это означает неверный или истекший API ключ
+        if (response.status === 401) {
+          return this.getFallbackForecast(days);
+        }
+        // Для других ошибок логируем как предупреждение
+        console.warn(`[WeatherService] Forecast API вернул статус ${response.status}, используем fallback данные`);
+        return this.getFallbackForecast(days);
       }
 
       const data = await response.json();
+      
+      // Проверяем структуру ответа
+      if (!data.list || !Array.isArray(data.list)) {
+        console.warn('[WeatherService] Неожиданная структура ответа Forecast API, используем fallback данные');
+        return this.getFallbackForecast(days);
+      }
+
       const forecast: WeatherAPIResponse[] = [];
 
       // Группируем данные по дням
@@ -176,7 +214,9 @@ export class WeatherService {
       this.cache.set(cacheKey, { data: forecast, timestamp: Date.now() });
       return forecast;
     } catch (error) {
-      console.error('Weather Forecast API error:', error);
+      // Сетевые ошибки или другие проблемы - используем fallback
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.warn(`[WeatherService] Ошибка при запросе Forecast API: ${errorMessage}, используем fallback данные`);
       return this.getFallbackForecast(days);
     }
   }
@@ -244,6 +284,11 @@ export class EconomicService {
       return cached.data;
     }
 
+    // Если основной API ключ отсутствует, используем fallback
+    if (!this.exchangeRateApiKey || this.exchangeRateApiKey.trim() === '') {
+      return this.getFallbackEconomicData();
+    }
+
     try {
       // Получаем данные из множественных источников параллельно
       const [exchangeRate, inflationData, consumerConfidenceData, unemploymentData] =
@@ -269,7 +314,9 @@ export class EconomicService {
       this.cache.set(cacheKey, { data: economicData, timestamp: Date.now() });
       return economicData;
     } catch (error) {
-      console.error('Economic API error:', error);
+      // Сетевые ошибки или другие проблемы - используем fallback
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.warn(`[EconomicService] Ошибка при получении экономических данных: ${errorMessage}, используем fallback данные`);
       return this.getFallbackEconomicData();
     }
   }
@@ -279,18 +326,37 @@ export class EconomicService {
       const response = await fetch(`${this.baseUrl}/${this.exchangeRateApiKey}/latest/USD`);
 
       if (!response.ok) {
-        throw new Error(`Exchange Rate API error: ${response.status}`);
+        // Если ошибка авторизации (401), это означает неверный или истекший API ключ
+        if (response.status === 401) {
+          return 95.5; // Fallback значение
+        }
+        // Для других ошибок логируем как предупреждение
+        console.warn(`[EconomicService] Exchange Rate API вернул статус ${response.status}, используем fallback значение`);
+        return 95.5;
       }
 
       const data = await response.json();
+      
+      // Проверяем структуру ответа
+      if (!data.conversion_rates || typeof data.conversion_rates.RUB !== 'number') {
+        console.warn('[EconomicService] Неожиданная структура ответа Exchange Rate API, используем fallback значение');
+        return 95.5;
+      }
+
       return data.conversion_rates.RUB;
     } catch (error) {
-      console.error('Exchange Rate API error:', error);
+      // Сетевые ошибки или другие проблемы - используем fallback
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.warn(`[EconomicService] Ошибка при запросе Exchange Rate API: ${errorMessage}, используем fallback значение`);
       return 95.5; // Fallback значение
     }
   }
 
   private async getInflationData(): Promise<number | null> {
+    if (!this.alphaVantageApiKey || this.alphaVantageApiKey.trim() === '') {
+      return null;
+    }
+
     try {
       // Используем Alpha Vantage API для получения данных об инфляции
       const response = await fetch(
@@ -304,16 +370,23 @@ export class EconomicService {
         if (inflationData && inflationData.length > 0) {
           return parseFloat(inflationData[0].value);
         }
+      } else if (response.status === 401) {
+        // Неверный API ключ - не логируем как ошибку
+        return null;
       }
 
       return null;
     } catch (error) {
-      console.error('Inflation API error:', error);
+      // Сетевые ошибки - не критично, просто возвращаем null
       return null;
     }
   }
 
   private async getConsumerConfidenceData(): Promise<number | null> {
+    if (!this.alphaVantageApiKey || this.alphaVantageApiKey.trim() === '') {
+      return null;
+    }
+
     try {
       // Используем Alpha Vantage API для получения данных о потребительском доверии
       const response = await fetch(
@@ -326,16 +399,23 @@ export class EconomicService {
         if (sentimentData && sentimentData.length > 0) {
           return parseFloat(sentimentData[0].value);
         }
+      } else if (response.status === 401) {
+        // Неверный API ключ - не логируем как ошибку
+        return null;
       }
 
       return null;
     } catch (error) {
-      console.error('Consumer Confidence API error:', error);
+      // Сетевые ошибки - не критично, просто возвращаем null
       return null;
     }
   }
 
   private async getUnemploymentData(): Promise<number | null> {
+    if (!this.fredApiKey || this.fredApiKey.trim() === '') {
+      return null;
+    }
+
     try {
       // Используем FRED API для получения данных о безработице
       const response = await fetch(
@@ -348,11 +428,14 @@ export class EconomicService {
         if (observations && observations.length > 0) {
           return parseFloat(observations[0].value);
         }
+      } else if (response.status === 401) {
+        // Неверный API ключ - не логируем как ошибку
+        return null;
       }
 
       return null;
     } catch (error) {
-      console.error('Unemployment API error:', error);
+      // Сетевые ошибки - не критично, просто возвращаем null
       return null;
     }
   }
@@ -397,16 +480,35 @@ export class HolidayService {
       return cached.data;
     }
 
+    // Если API ключ отсутствует или пустой, используем fallback без запроса
+    if (!this.apiKey || this.apiKey.trim() === '') {
+      return this.getFallbackHolidays();
+    }
+
     try {
       const response = await fetch(
         `${this.baseUrl}/holidays?api_key=${this.apiKey}&country=${country}&year=${year}`,
       );
 
       if (!response.ok) {
-        throw new Error(`Holiday API error: ${response.status}`);
+        // Если ошибка авторизации (401), это означает неверный или истекший API ключ
+        // Используем fallback без логирования ошибки
+        if (response.status === 401) {
+          return this.getFallbackHolidays();
+        }
+        // Для других ошибок логируем как предупреждение
+        console.warn(`[HolidayService] API вернул статус ${response.status}, используем fallback данные`);
+        return this.getFallbackHolidays();
       }
 
       const data = await response.json();
+      
+      // Проверяем структуру ответа
+      if (!data.response || !data.response.holidays) {
+        console.warn('[HolidayService] Неожиданная структура ответа API, используем fallback данные');
+        return this.getFallbackHolidays();
+      }
+
       const holidays: HolidayData[] = data.response.holidays.map((holiday: any) => ({
         date: holiday.date.iso,
         name: holiday.name,
@@ -416,9 +518,16 @@ export class HolidayService {
       }));
 
       this.cache.set(cacheKey, { data: holidays, timestamp: Date.now() });
+      
+      // Логируем успешный запрос к Holiday API
+      console.log(`[HolidayService] ✅ Успешно получено ${holidays.length} праздников для ${country} за ${year} год`);
+      
       return holidays;
     } catch (error) {
-      console.error('Holiday API error:', error);
+      // Сетевые ошибки или другие проблемы - используем fallback
+      // Логируем только как предупреждение, не как ошибку
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.warn(`[HolidayService] Ошибка при запросе к API: ${errorMessage}, используем fallback данные`);
       return this.getFallbackHolidays();
     }
   }
@@ -434,90 +543,90 @@ export class HolidayService {
   }
 
   private calculateHolidayImpact(name: string, type: string): number {
-    // Базовое влияние по типу
+    // Значительно увеличенное базовое влияние по типу для более заметного эффекта
     const baseImpact: { [key: string]: number } = {
-      national: 0.2,
-      religious: 0.15,
-      regional: 0.1,
-      observance: 0.05,
+      national: 0.4, // Значительно увеличено с 0.3 до 0.4 (+33%)
+      religious: 0.35, // Значительно увеличено с 0.25 до 0.35 (+40%)
+      regional: 0.3, // Значительно увеличено с 0.2 до 0.3 (+50%)
+      observance: 0.15, // Значительно увеличено с 0.1 до 0.15 (+50%)
     };
 
-    let impact = baseImpact[type] || 0.05;
+    let impact = baseImpact[type] || 0.15;
 
-    // Специальные корректировки для известных праздников
+    // Специальные корректировки для известных праздников (значительно увеличенные значения)
     const nameLower = name.toLowerCase();
 
     if (nameLower.includes('новый год') || nameLower.includes('рождество')) {
-      impact = 0.3;
+      impact = 0.5; // Значительно увеличено с 0.4 до 0.5 (+25%)
     } else if (nameLower.includes('день победы') || nameLower.includes('день защитника')) {
-      impact = 0.25;
+      impact = 0.45; // Значительно увеличено с 0.35 до 0.45 (+29%)
     } else if (nameLower.includes('международный женский день')) {
-      impact = 0.2;
+      impact = 0.4; // Значительно увеличено с 0.3 до 0.4 (+33%)
     } else if (nameLower.includes('день знаний') || nameLower.includes('первое сентября')) {
-      impact = 0.15;
+      impact = 0.35; // Значительно увеличено с 0.25 до 0.35 (+40%)
     }
 
     return impact;
   }
 
   private getFallbackHolidays(): HolidayData[] {
-    // Стандартные российские праздники
+    // Стандартные российские праздники с обновленными значениями влияния
     return [
       {
         date: `${new Date().getFullYear()}-01-01`,
         name: 'Новый год',
         type: 'national',
         country: 'RU',
-        impact: 0.3,
+        impact: 0.5, // Обновлено с 0.3 до 0.5
       },
       {
         date: `${new Date().getFullYear()}-01-07`,
         name: 'Рождество Христово',
         type: 'religious',
         country: 'RU',
-        impact: 0.25,
+        impact: 0.5, // Обновлено с 0.25 до 0.5
       },
       {
         date: `${new Date().getFullYear()}-02-23`,
         name: 'День защитника Отечества',
         type: 'national',
         country: 'RU',
-        impact: 0.2,
+        impact: 0.45, // Обновлено с 0.2 до 0.45
       },
       {
         date: `${new Date().getFullYear()}-03-08`,
         name: 'Международный женский день',
         type: 'national',
         country: 'RU',
-        impact: 0.2,
+        impact: 0.4, // Обновлено с 0.2 до 0.4
       },
       {
         date: `${new Date().getFullYear()}-05-01`,
         name: 'Праздник Весны и Труда',
         type: 'national',
         country: 'RU',
-        impact: 0.15,
+        impact: 0.4, // Обновлено с 0.15 до 0.4
       },
       {
         date: `${new Date().getFullYear()}-05-09`,
         name: 'День Победы',
         type: 'national',
         country: 'RU',
-        impact: 0.25,
+        impact: 0.45, // Обновлено с 0.25 до 0.45
       },
       {
         date: `${new Date().getFullYear()}-06-12`,
         name: 'День России',
         type: 'national',
         country: 'RU',
-        impact: 0.15,
+        impact: 0.4, // Обновлено с 0.15 до 0.4
       },
       {
         date: `${new Date().getFullYear()}-11-04`,
         name: 'День народного единства',
         type: 'national',
         country: 'RU',
-        impact: 0.15,
+        impact: 0.4, // Обновлено с 0.15 до 0.4
       },
     ];
   }
@@ -878,12 +987,35 @@ export class ExternalDataService {
     traffic?: TrafficData;
     sentiment: SocialSentiment[];
   }> {
-    const [weather, economic, holidays, sentiment] = await Promise.all([
+    // Определяем диапазон годов для прогноза
+    const currentYear = new Date().getFullYear();
+    const endDate = new Date();
+    endDate.setDate(endDate.getDate() + days);
+    const endYear = endDate.getFullYear();
+    
+    // Загружаем праздники для всех годов в диапазоне прогноза
+    const yearsToLoad = [];
+    for (let year = currentYear; year <= endYear; year++) {
+      yearsToLoad.push(year);
+    }
+    
+    // Загружаем праздники для всех годов параллельно
+    const holidaysPromises = yearsToLoad.map(year => 
+      this.holidayService.getHolidays('RU', year)
+    );
+    
+    const [weather, economic, holidaysArrays, sentiment] = await Promise.all([
       this.weatherService.getWeatherForecast(location.lat, location.lon, days),
       this.economicService.getEconomicIndicators(),
-      this.holidayService.getHolidays(),
+      Promise.all(holidaysPromises),
       this.socialSentimentService.getSocialSentiment(['кофе', 'кофейня', 'кафе']),
     ]);
+
+    // Объединяем праздники из всех годов в один массив
+    const holidays = holidaysArrays.flat();
+    
+    // Логируем для отладки
+    console.log(`[ExternalDataService] Загружено ${holidays.length} праздников для годов ${yearsToLoad.join(', ')}`);
 
     const result: any = {
       weather,

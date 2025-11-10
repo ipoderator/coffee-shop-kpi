@@ -23,6 +23,8 @@ import {
   type InsertForecastPrediction,
   type ModelAccuracyMetric,
   type InsertModelAccuracyMetric,
+  type MLModel,
+  type InsertMLModel,
 } from '@shared/schema';
 import { randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
@@ -106,6 +108,14 @@ export interface IStorage {
   upsertModelAccuracyMetric(metric: InsertModelAccuracyMetric): Promise<ModelAccuracyMetric>;
   getAllModelAccuracyMetrics(): Promise<ModelAccuracyMetric[]>;
   getModelAccuracyMetricsByModel(modelName: string): Promise<ModelAccuracyMetric[]>;
+  deleteModelAccuracyMetric(id: string): Promise<void>;
+
+  // ML Models (Persistent Storage)
+  saveMLModel(model: InsertMLModel): Promise<MLModel>;
+  getMLModel(modelName: string, uploadId: string, dataHash: string): Promise<MLModel | null>;
+  updateMLModelLastUsed(id: string): Promise<void>;
+  deleteOldMLModels(olderThanDays: number): Promise<void>;
+  getMLModelsByUploadId(uploadId: string): Promise<MLModel[]>;
 }
 
 export interface CreateProfitabilityDatasetInput {
@@ -197,6 +207,7 @@ export class MemStorage implements IStorage {
   private profitabilityFiles: Map<string, Buffer>;
   private forecastPredictions: Map<string, ForecastPrediction>;
   private modelAccuracyMetrics: Map<string, ModelAccuracyMetric>;
+  private mlModels: Map<string, MLModel>;
 
   constructor() {
     this.transactions = new Map();
@@ -211,6 +222,7 @@ export class MemStorage implements IStorage {
     this.profitabilityFiles = new Map();
     this.forecastPredictions = new Map();
     this.modelAccuracyMetrics = new Map();
+    this.mlModels = new Map();
   }
 
   /**
@@ -873,6 +885,79 @@ export class MemStorage implements IStorage {
 
   async getModelAccuracyMetricsByModel(modelName: string): Promise<ModelAccuracyMetric[]> {
     return Array.from(this.modelAccuracyMetrics.values()).filter((m) => m.modelName === modelName);
+  }
+
+  async deleteModelAccuracyMetric(id: string): Promise<void> {
+    this.modelAccuracyMetrics.delete(id);
+  }
+
+  // ML Models (Persistent Storage) methods
+  async saveMLModel(model: InsertMLModel): Promise<MLModel> {
+    const id = randomUUID();
+    const now = new Date();
+    const mlModel: MLModel = {
+      ...model,
+      id,
+      trainedAt: now,
+      lastUsedAt: now,
+      version: model.version ?? 1,
+      supportsIncremental: model.supportsIncremental ?? false,
+    };
+    
+    this.mlModels.set(id, mlModel);
+    
+    // Автоматически очищаем старые модели (старше 30 дней)
+    await this.deleteOldMLModels(30);
+    
+    return mlModel;
+  }
+
+  async getMLModel(modelName: string, uploadId: string, dataHash: string): Promise<MLModel | null> {
+    for (const model of this.mlModels.values()) {
+      if (
+        model.modelName === modelName &&
+        model.uploadId === uploadId &&
+        model.dataHash === dataHash
+      ) {
+        return model;
+      }
+    }
+    
+    return null;
+  }
+
+  async updateMLModelLastUsed(id: string): Promise<void> {
+    const model = this.mlModels.get(id);
+    if (model) {
+      model.lastUsedAt = new Date();
+      this.mlModels.set(id, model);
+    }
+  }
+
+  async deleteOldMLModels(olderThanDays: number): Promise<void> {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - olderThanDays);
+    
+    const modelsToDelete: string[] = [];
+    for (const [id, model] of this.mlModels.entries()) {
+      if (model.lastUsedAt < cutoffDate) {
+        modelsToDelete.push(id);
+      }
+    }
+    
+    for (const id of modelsToDelete) {
+      this.mlModels.delete(id);
+    }
+    
+    if (modelsToDelete.length > 0) {
+      console.log(`🧹 Удалено ${modelsToDelete.length} старых ML моделей (старше ${olderThanDays} дней)`);
+    }
+  }
+
+  async getMLModelsByUploadId(uploadId: string): Promise<MLModel[]> {
+    return Array.from(this.mlModels.values()).filter(
+      (model) => model.uploadId === uploadId,
+    );
   }
 
   /**
